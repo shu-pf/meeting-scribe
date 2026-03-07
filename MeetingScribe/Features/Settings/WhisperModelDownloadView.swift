@@ -76,8 +76,10 @@ struct WhisperModelDownloadView: View {
                 try await downloader.download(
                     modelID: modelID,
                     store: store,
-                    progressHandler: { @MainActor in
-                        downloadProgress = $0
+                    progressHandler: { progress in
+                        Task { @MainActor in
+                            downloadProgress = progress
+                        }
                     }
                 )
                 await MainActor.run {

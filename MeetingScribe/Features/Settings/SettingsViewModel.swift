@@ -22,7 +22,7 @@ final class SettingsViewModel: ObservableObject {
 
     init(
         settings: SettingsServiceProtocol? = nil,
-        whisperModelStore: WhisperModelStoreProtocol = WhisperModelStore.shared
+        whisperModelStore: WhisperModelStoreProtocol
     ) {
         self.settings = settings ?? SettingsService()
         self.whisperModelStore = whisperModelStore
