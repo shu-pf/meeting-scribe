@@ -13,7 +13,7 @@ MeetingScribe の会議要約は、ローカルで動作する Ollama を HTTP A
 | 用途 | エンドポイント | 説明 |
 |------|----------------|------|
 | 要約モデル一覧 | `GET http://localhost:11434/api/tags` | インストール済みモデル名の取得。設定画面の Picker に表示。 |
-| 要約生成 | `POST http://localhost:11434/api/generate` | 文字起こしテキストを送り、要約文を取得。`model`, `prompt`, `stream: false` を指定。 |
+| 要約生成 | `POST http://localhost:11434/api/generate` | 文字起こしテキストを送り、要約文を取得。`model`, `prompt`, `stream: false` に加え、`options` で `num_ctx: 131072`（コンテキスト長 128K）、`num_predict: 8192`（生成トークン上限）を指定し、1時間超の会議にも余裕を持って対応。 |
 
 要約のプロンプトは「以下の会議の文字起こしを要約し、議題・決定事項・アクションアイテムに整理して出力してください。」に続けて文字起こしを付与しています。
 

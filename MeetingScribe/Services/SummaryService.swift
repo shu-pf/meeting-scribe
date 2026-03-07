@@ -19,6 +19,10 @@ protocol SummaryServiceProtocol: Sendable {
 private let ollamaBaseURL = "http://localhost:11434"
 private let generateTimeout: TimeInterval = 60
 private let tagsTimeout: TimeInterval = 5
+/// 1時間超の会議も見込んだコンテキスト長（128K トークン）
+private let defaultNumCtx = 131_072
+/// 要約文が途中で切れないよう生成トークン上限を指定
+private let defaultNumPredict = 8_192
 
 /// 会議文字起こしを Ollama の /api/generate で要約する。
 final class SummaryService: SummaryServiceProtocol {
@@ -49,7 +53,11 @@ final class SummaryService: SummaryServiceProtocol {
         let body: [String: Any] = [
             "model": modelID,
             "prompt": prompt,
-            "stream": false
+            "stream": false,
+            "options": [
+                "num_ctx": defaultNumCtx,
+                "num_predict": defaultNumPredict
+            ] as [String: Any]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

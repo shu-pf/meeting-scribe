@@ -5,6 +5,7 @@
 
 import Combine
 import Foundation
+import ServiceManagement
 import SwiftUI
 
 @MainActor
@@ -39,7 +40,13 @@ final class SettingsViewModel: ObservableObject {
         }
         selectedWhisperModelID = await settings.selectedWhisperModelID ?? ""
         selectedSummaryModelID = await settings.selectedSummaryModelID ?? ""
-        launchAtLogin = await settings.launchAtLogin
+        if #available(macOS 13.0, *) {
+            let enabled = SMAppService.mainApp.status == .enabled
+            launchAtLogin = enabled
+            await settings.setLaunchAtLogin(enabled)
+        } else {
+            launchAtLogin = await settings.launchAtLogin
+        }
         whisperModelIDs = await whisperModelStore.downloadedModelIDs()
         do {
             summaryModelIDs = try await summaryService.fetchAvailableModelIDs()
@@ -76,6 +83,13 @@ final class SettingsViewModel: ObservableObject {
     }
 
     func setLaunchAtLogin(_ enabled: Bool) async {
+        if #available(macOS 13.0, *) {
+            if enabled {
+                try? SMAppService.mainApp.register()
+            } else {
+                try? await SMAppService.mainApp.unregister()
+            }
+        }
         await settings.setLaunchAtLogin(enabled)
         launchAtLogin = enabled
     }
