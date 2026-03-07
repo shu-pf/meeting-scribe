@@ -336,10 +336,11 @@ final class RecordingService: RecordingServiceProtocol {
         if let wid = windowID,
            let window = content.windows.first(where: { $0.windowID == wid }) {
             filter = SCContentFilter(desktopIndependentWindow: window)
-            let frame = window.frame
-            let scale: Int = 2
-            width = Int(frame.width) * scale
-            height = Int(frame.height) * scale
+            // フィルタの contentRect と pointPixelScale で解像度を合わせ、余白（黒塗り）を防ぐ
+            let contentRect = filter.contentRect
+            let scale = CGFloat(filter.pointPixelScale)
+            width = Int(contentRect.width * scale)
+            height = Int(contentRect.height * scale)
         } else {
             let display: SCDisplay
             if let did = displayID {
@@ -373,6 +374,10 @@ final class RecordingService: RecordingServiceProtocol {
         config.queueDepth = 5
         config.capturesAudio = true
         config.excludesCurrentProcessAudio = true
+        // ウィンドウ録画時はアスペクト比維持をオフにし、余白（黒塗り）を防ぐ
+        if windowID != nil {
+            config.preservesAspectRatio = false
+        }
 
         let writer: AVAssetWriter
         let input: AVAssetWriterInput
