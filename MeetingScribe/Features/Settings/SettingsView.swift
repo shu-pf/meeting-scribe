@@ -9,6 +9,7 @@ import AppKit
 @MainActor
 struct SettingsView: View {
     @StateObject private var viewModel = SettingsViewModel()
+    @State private var whisperDownloader = WhisperModelDownloader()
 
     var body: some View {
         Form {
@@ -36,6 +37,9 @@ struct SettingsView: View {
                         Text(id).tag(id)
                     }
                 }
+                Button("モデルを追加") {
+                    viewModel.showWhisperModelDownloadSheet = true
+                }
             }
             Section("要約（LLM）") {
                 Picker("モデル", selection: Binding(
@@ -57,7 +61,24 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(minWidth: 400, minHeight: 320)
-        .task { await viewModel.load() }
+        .task {
+            await viewModel.load()
+            if await viewModel.shouldShowWhisperModelDownloadSheet() {
+                viewModel.showWhisperModelDownloadSheet = true
+            }
+        }
+        .sheet(isPresented: $viewModel.showWhisperModelDownloadSheet) {
+            WhisperModelDownloadView(
+                onComplete: { modelID in
+                    Task {
+                        await viewModel.setSelectedWhisperModelID(modelID)
+                        await viewModel.load()
+                    }
+                },
+                store: WhisperModelStore.shared,
+                downloader: whisperDownloader
+            )
+        }
     }
 
     private func openOutputFolderPicker() {

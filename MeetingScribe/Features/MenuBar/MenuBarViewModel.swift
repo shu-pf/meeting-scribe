@@ -22,6 +22,15 @@ struct WindowItem: Identifiable {
     let label: String
 }
 
+/// 録画終了後のパイプライン（文字起こし・要約）の状態
+enum PipelineStatus: Equatable {
+    case idle
+    case transcribing
+    case summarizing
+    case completed
+    case failed(String)
+}
+
 @MainActor
 final class MenuBarViewModel: ObservableObject {
     @Published var isRecording = false
@@ -31,6 +40,7 @@ final class MenuBarViewModel: ObservableObject {
     @Published var displayItems: [DisplayItem] = []
     @Published var windowItems: [WindowItem] = []
     @Published var isLoadingContent = false
+    @Published var pipelineStatus: PipelineStatus = .idle
 
     private let recording: RecordingServiceProtocol
     private let settings: SettingsServiceProtocol
@@ -69,6 +79,7 @@ final class MenuBarViewModel: ObservableObject {
                 try await recording.startRecording(displayID: selectedDisplayID, windowID: selectedWindowID, outputURL: outputURL)
                 isRecording = true
                 errorMessage = nil
+                pipelineStatus = .idle
             } catch {
                 releaseSecurityScopedOutputDirectory()
                 errorMessage = error.localizedDescription
@@ -81,10 +92,18 @@ final class MenuBarViewModel: ObservableObject {
             do {
                 let fileURL = try await recording.stopRecording()
                 isRecording = false
-                try await pipeline.processRecording(fileURL: fileURL)
                 errorMessage = nil
+                pipelineStatus = .transcribing
+                do {
+                    try await pipeline.processRecording(fileURL: fileURL)
+                    pipelineStatus = .completed
+                } catch {
+                    pipelineStatus = .failed(error.localizedDescription)
+                    errorMessage = error.localizedDescription
+                }
             } catch {
                 errorMessage = error.localizedDescription
+                pipelineStatus = .failed(error.localizedDescription)
             }
             releaseSecurityScopedOutputDirectory()
         }

@@ -25,15 +25,28 @@ final class RecordingPipeline: RecordingPipelineProtocol {
     }
 
     func processRecording(fileURL: URL) async throws {
+        let startedAt = Date()
         let modelID = await settings.selectedWhisperModelID ?? "default"
         let transcript = try await transcription.transcribe(audioOrVideoURL: fileURL, modelID: modelID)
         let summaryModelID = await settings.selectedSummaryModelID ?? "default"
         let summaryText = try await summary.summarize(transcript: transcript, modelID: summaryModelID)
+        let endedAt = Date()
+        let result = RecordingResult(
+            fileURL: fileURL,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            transcript: transcript,
+            summaryText: summaryText
+        )
         guard let outputDir = await settings.outputDirectoryURL else { return }
         let baseName = fileURL.deletingPathExtension().lastPathComponent
         let transcriptURL = outputDir.appendingPathComponent("\(baseName)_transcript.txt")
         let summaryURL = outputDir.appendingPathComponent("\(baseName)_summary.txt")
-        try transcript.write(to: transcriptURL, atomically: true, encoding: .utf8)
-        try summaryText.write(to: summaryURL, atomically: true, encoding: .utf8)
+        if let t = result.transcript {
+            try t.write(to: transcriptURL, atomically: true, encoding: .utf8)
+        }
+        if let s = result.summaryText {
+            try s.write(to: summaryURL, atomically: true, encoding: .utf8)
+        }
     }
 }

@@ -1,0 +1,2 @@
+# Placeholder so Resources directory is tracked.
+# Run scripts/build_whisper.sh to build and copy the whisper binary here as "whisper".

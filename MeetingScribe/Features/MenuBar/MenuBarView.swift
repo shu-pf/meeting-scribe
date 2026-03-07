@@ -37,7 +37,23 @@ struct MenuBarView: View {
                 .buttonStyle(.bordered)
             }
 
-            if let message = viewModel.errorMessage {
+            switch viewModel.pipelineStatus {
+            case .idle:
+                if let message = viewModel.errorMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                }
+            case .transcribing, .summarizing:
+                Text("文字起こし・要約中…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case .completed:
+                Text("処理が完了しました")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case .failed(let message):
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.red)

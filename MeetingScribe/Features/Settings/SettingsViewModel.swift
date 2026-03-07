@@ -15,11 +15,17 @@ final class SettingsViewModel: ObservableObject {
     @Published var launchAtLogin: Bool = false
     @Published var whisperModelIDs: [String] = []
     @Published var summaryModelIDs: [String] = []
+    @Published var showWhisperModelDownloadSheet: Bool = false
 
     private let settings: SettingsServiceProtocol
+    private let whisperModelStore: WhisperModelStoreProtocol
 
-    init(settings: SettingsServiceProtocol? = nil) {
+    init(
+        settings: SettingsServiceProtocol? = nil,
+        whisperModelStore: WhisperModelStoreProtocol = WhisperModelStore.shared
+    ) {
         self.settings = settings ?? SettingsService()
+        self.whisperModelStore = whisperModelStore
     }
 
     func load() async {
@@ -31,8 +37,15 @@ final class SettingsViewModel: ObservableObject {
         selectedWhisperModelID = await settings.selectedWhisperModelID ?? ""
         selectedSummaryModelID = await settings.selectedSummaryModelID ?? ""
         launchAtLogin = await settings.launchAtLogin
-        whisperModelIDs = ["tiny", "base", "small", "medium"]
+        whisperModelIDs = await whisperModelStore.downloadedModelIDs()
         summaryModelIDs = ["llama2", "mistral", "gemma"]
+    }
+
+    /// 文字起こしモデルが未設定のときは true（初回ダイアログ表示用）
+    func shouldShowWhisperModelDownloadSheet() async -> Bool {
+        let selected = await settings.selectedWhisperModelID
+        let downloaded = await whisperModelStore.downloadedModelIDs()
+        return selected == nil && downloaded.isEmpty
     }
 
     func setOutputDirectory(_ url: URL) async {
