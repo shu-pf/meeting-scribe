@@ -41,7 +41,14 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         let modelID = await settings.selectedWhisperModelID ?? "default"
         let transcript = try await transcription.transcribe(audioOrVideoURL: fileURL, modelID: modelID)
 
-        // 2. 要約（設定があれば）→ タイトル取得。なければ「無題」
+        // 2. 文字起こしをすぐに出力（要約の前。日時のみのファイル名）
+        let recordingDate = (try? fileManager.attributesOfItem(atPath: fileURL.path)[.creationDate] as? Date) ?? Date()
+        let dateString = Self.baseNameDateFormatter.string(from: recordingDate)
+        let earlyTranscriptURL = outputDir.appendingPathComponent("\(dateString)_transcript.md")
+        let markdownTranscript = "# 文字起こし\n\n\(transcript)"
+        try markdownTranscript.write(to: earlyTranscriptURL, atomically: true, encoding: .utf8)
+
+        // 3. 要約（設定があれば）→ タイトル取得。なければ「無題」
         let meetingTitle: String
         var summaryResult: SummarizeResult?
         if let summaryModelID = await settings.selectedSummaryModelID, !summaryModelID.isEmpty {
@@ -52,13 +59,11 @@ final class RecordingPipeline: RecordingPipelineProtocol {
             meetingTitle = "無題"
         }
 
-        // 3. 日時 + 会議名で baseName を生成
-        let recordingDate = (try? fileManager.attributesOfItem(atPath: fileURL.path)[.creationDate] as? Date) ?? Date()
-        let dateString = Self.baseNameDateFormatter.string(from: recordingDate)
+        // 4. 日時 + 会議名で baseName を生成
         let sanitizedTitle = Self.sanitizeFileName(meetingTitle)
         let baseName = "\(dateString)_\(sanitizedTitle)"
 
-        // 4. 録画を outputDir にコピー
+        // 5. 録画を outputDir にコピー
         let recordingDestURL = outputDir.appendingPathComponent("\(baseName).\(ext)")
         let samePath = fileURL.standardizedFileURL.path == recordingDestURL.standardizedFileURL.path
         if !samePath {
@@ -68,12 +73,16 @@ final class RecordingPipeline: RecordingPipelineProtocol {
             try fileManager.copyItem(at: fileURL, to: recordingDestURL)
         }
 
-        // 5. 文字起こしを出力
+        // 6. 文字起こしを baseName にリネーム（同一 path の場合はスキップ）
         let transcriptURL = outputDir.appendingPathComponent("\(baseName)_transcript.md")
-        let markdownTranscript = "# 文字起こし\n\n\(transcript)"
-        try markdownTranscript.write(to: transcriptURL, atomically: true, encoding: .utf8)
+        if earlyTranscriptURL.standardizedFileURL.path != transcriptURL.standardizedFileURL.path {
+            if fileManager.fileExists(atPath: transcriptURL.path) {
+                try fileManager.removeItem(at: transcriptURL)
+            }
+            try fileManager.moveItem(at: earlyTranscriptURL, to: transcriptURL)
+        }
 
-        // 6. 要約を出力（先頭に会議名を明示）
+        // 7. 要約を出力（先頭に会議名を明示）
         if let result = summaryResult {
             let summaryURL = outputDir.appendingPathComponent("\(baseName)_summary.md")
             let markdownSummary = "# 要約\n\n## 会議名\n\(result.title)\n\n\(result.body)"
