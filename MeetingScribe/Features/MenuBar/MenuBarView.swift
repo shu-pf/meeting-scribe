@@ -57,7 +57,7 @@ struct MenuBarView: View {
 
     private func openSettings() {
         NSApp.activate(ignoringOtherApps: true)
-        openWindow(id: "settings")
+        openWindow(id: "settings", value: "main")
     }
 }
 

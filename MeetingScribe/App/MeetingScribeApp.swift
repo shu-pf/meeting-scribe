@@ -19,7 +19,7 @@ struct MeetingScribeApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        WindowGroup(id: "settings") {
+        WindowGroup(id: "settings", for: String.self) { _ in
             ContentView()
         }
         .windowStyle(.automatic)
