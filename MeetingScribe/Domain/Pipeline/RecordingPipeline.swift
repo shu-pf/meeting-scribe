@@ -47,10 +47,13 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         let baseName = fileURL.deletingPathExtension().lastPathComponent
         let ext = fileURL.pathExtension.isEmpty ? "mp4" : fileURL.pathExtension
         let recordingDestURL = outputDir.appendingPathComponent("\(baseName).\(ext)")
-        if fileManager.fileExists(atPath: recordingDestURL.path) {
-            try fileManager.removeItem(at: recordingDestURL)
+        let samePath = fileURL.standardizedFileURL.path == recordingDestURL.standardizedFileURL.path
+        if !samePath {
+            if fileManager.fileExists(atPath: recordingDestURL.path) {
+                try fileManager.removeItem(at: recordingDestURL)
+            }
+            try fileManager.copyItem(at: fileURL, to: recordingDestURL)
         }
-        try fileManager.copyItem(at: fileURL, to: recordingDestURL)
         let transcriptURL = outputDir.appendingPathComponent("\(baseName)_transcript.txt")
         let summaryURL = outputDir.appendingPathComponent("\(baseName)_summary.txt")
         if let t = result.transcript {
