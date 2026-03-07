@@ -14,6 +14,8 @@ protocol SettingsServiceProtocol: Sendable {
     func setSelectedSummaryModelID(_ id: String?) async
     var launchAtLogin: Bool { get async }
     func setLaunchAtLogin(_ enabled: Bool) async
+    var hasSeenFirstLaunchGuidance: Bool { get async }
+    func setHasSeenFirstLaunchGuidance(_ value: Bool) async
 }
 
 final class SettingsService: SettingsServiceProtocol {
@@ -25,6 +27,7 @@ final class SettingsService: SettingsServiceProtocol {
         static let selectedWhisperModelID = "selectedWhisperModelID"
         static let selectedSummaryModelID = "selectedSummaryModelID"
         static let launchAtLogin = "launchAtLogin"
+        static let hasSeenFirstLaunchGuidance = "hasSeenFirstLaunchGuidance"
     }
 
     var outputDirectoryURL: URL? {
@@ -93,5 +96,13 @@ final class SettingsService: SettingsServiceProtocol {
 
     func setLaunchAtLogin(_ enabled: Bool) async {
         defaults.set(enabled, forKey: Keys.launchAtLogin)
+    }
+
+    var hasSeenFirstLaunchGuidance: Bool {
+        get async { defaults.bool(forKey: Keys.hasSeenFirstLaunchGuidance) }
+    }
+
+    func setHasSeenFirstLaunchGuidance(_ value: Bool) async {
+        defaults.set(value, forKey: Keys.hasSeenFirstLaunchGuidance)
     }
 }
