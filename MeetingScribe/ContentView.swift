@@ -7,15 +7,10 @@
 
 import SwiftUI
 
+/// 設定ウィンドウのルート。アプリクリックで開くメインウィンドウに表示する。
 struct ContentView: View {
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
+        SettingsView()
     }
 }
 
