@@ -28,8 +28,12 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         let startedAt = Date()
         let modelID = await settings.selectedWhisperModelID ?? "default"
         let transcript = try await transcription.transcribe(audioOrVideoURL: fileURL, modelID: modelID)
-        let summaryModelID = await settings.selectedSummaryModelID ?? "default"
-        let summaryText = try await summary.summarize(transcript: transcript, modelID: summaryModelID)
+        let summaryText: String?
+        if let summaryModelID = await settings.selectedSummaryModelID, !summaryModelID.isEmpty {
+            summaryText = try await summary.summarize(transcript: transcript, modelID: summaryModelID)
+        } else {
+            summaryText = nil
+        }
         let endedAt = Date()
         let result = RecordingResult(
             fileURL: fileURL,
@@ -39,7 +43,14 @@ final class RecordingPipeline: RecordingPipelineProtocol {
             summaryText: summaryText
         )
         guard let outputDir = await settings.outputDirectoryURL else { return }
+        let fileManager = FileManager.default
         let baseName = fileURL.deletingPathExtension().lastPathComponent
+        let ext = fileURL.pathExtension.isEmpty ? "mp4" : fileURL.pathExtension
+        let recordingDestURL = outputDir.appendingPathComponent("\(baseName).\(ext)")
+        if fileManager.fileExists(atPath: recordingDestURL.path) {
+            try fileManager.removeItem(at: recordingDestURL)
+        }
+        try fileManager.copyItem(at: fileURL, to: recordingDestURL)
         let transcriptURL = outputDir.appendingPathComponent("\(baseName)_transcript.txt")
         let summaryURL = outputDir.appendingPathComponent("\(baseName)_summary.txt")
         if let t = result.transcript {

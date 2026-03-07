@@ -8,7 +8,10 @@ import AppKit
 
 @MainActor
 struct SettingsView: View {
-    @StateObject private var viewModel = SettingsViewModel(whisperModelStore: WhisperModelStore.shared)
+    @StateObject private var viewModel = SettingsViewModel(
+        whisperModelStore: WhisperModelStore.shared,
+        summaryService: SummaryService()
+    )
     @State private var whisperDownloader = WhisperModelDownloader()
 
     var body: some View {

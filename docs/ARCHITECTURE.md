@@ -57,8 +57,8 @@ MeetingScribe/
 5. 取得したテキストを SummaryService に渡し、Ollama API で要約を生成。
 6. 録画ファイル・文字起こし・要約を出力フォルダに保存。
 
-## 6. 次のステップ（開発手順 3〜5）
+## 6. 開発手順の状態
 
-- **手順 3（画面録画）**: RecordingService と ScreenCaptureKit、MenuBar の録画 UI を実装。
-- **手順 4（文字起こし）**: Whisper エンジンのアプリ同梱、モデル選択・非同期ダウンロード UI、TranscriptionService と同梱バイナリの連携。
-- **手順 5（要約）**: SummaryService と Ollama、パイプラインの仕上げと出力フォルダへの保存。
+- **手順 3（画面録画）**: 実装済み。RecordingService と ScreenCaptureKit、MenuBar の録画 UI。
+- **手順 4（文字起こし）**: 実装済み。Whisper エンジンのアプリ同梱、モデル選択・非同期ダウンロード UI、TranscriptionService と同梱バイナリの連携。
+- **手順 5（要約）**: 実装済み。SummaryService と Ollama HTTP API、パイプラインの仕上げと出力フォルダへの保存（録画ファイル・文字起こし・要約）。詳細は [docs/OLLAMA.md](OLLAMA.md) を参照。

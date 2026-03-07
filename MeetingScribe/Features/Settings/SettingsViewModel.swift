@@ -19,13 +19,16 @@ final class SettingsViewModel: ObservableObject {
 
     private let settings: SettingsServiceProtocol
     private let whisperModelStore: WhisperModelStoreProtocol
+    private let summaryService: SummaryServiceProtocol
 
     init(
         settings: SettingsServiceProtocol? = nil,
-        whisperModelStore: WhisperModelStoreProtocol
+        whisperModelStore: WhisperModelStoreProtocol,
+        summaryService: SummaryServiceProtocol? = nil
     ) {
         self.settings = settings ?? SettingsService()
         self.whisperModelStore = whisperModelStore
+        self.summaryService = summaryService ?? SummaryService()
     }
 
     func load() async {
@@ -38,7 +41,11 @@ final class SettingsViewModel: ObservableObject {
         selectedSummaryModelID = await settings.selectedSummaryModelID ?? ""
         launchAtLogin = await settings.launchAtLogin
         whisperModelIDs = await whisperModelStore.downloadedModelIDs()
-        summaryModelIDs = ["llama2", "mistral", "gemma"]
+        do {
+            summaryModelIDs = try await summaryService.fetchAvailableModelIDs()
+        } catch {
+            summaryModelIDs = []
+        }
     }
 
     /// 文字起こしモデルが未設定のときは true（初回ダイアログ表示用）
