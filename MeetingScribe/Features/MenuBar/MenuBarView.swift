@@ -43,9 +43,10 @@ struct MenuBarView: View {
             Button("設定を開く") {
                 openSettings()
             }
+            .buttonStyle(.bordered)
         }
         .frame(width: 280)
-        .padding(.vertical, 8)
+        .padding(12)
     }
 
     private func openSettings() {

@@ -22,7 +22,6 @@ struct WindowPickerView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding()
     }
 }
 
