@@ -9,9 +9,11 @@ import SwiftUI
 
 @main
 struct MeetingScribeApp: App {
+    @StateObject private var menuBarViewModel = MenuBarViewModel()
+
     var body: some Scene {
         MenuBarExtra {
-            MenuBarView()
+            MenuBarView(viewModel: menuBarViewModel)
         } label: {
             Image(systemName: "menubar.dock.rectangle")
         }

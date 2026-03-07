@@ -8,7 +8,7 @@ import SwiftUI
 @MainActor
 struct MenuBarView: View {
     @Environment(\.openWindow) private var openWindow
-    @StateObject private var viewModel = MenuBarViewModel()
+    @ObservedObject var viewModel: MenuBarViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -62,6 +62,6 @@ struct MenuBarView: View {
 }
 
 #Preview {
-    MenuBarView()
+    MenuBarView(viewModel: MenuBarViewModel())
         .frame(width: 280)
 }

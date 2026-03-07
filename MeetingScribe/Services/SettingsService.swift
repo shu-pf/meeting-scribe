@@ -21,6 +21,7 @@ final class SettingsService: SettingsServiceProtocol {
 
     private enum Keys {
         static let outputDirectoryPath = "outputDirectoryPath"
+        static let outputDirectoryBookmark = "outputDirectoryBookmark"
         static let selectedWhisperModelID = "selectedWhisperModelID"
         static let selectedSummaryModelID = "selectedSummaryModelID"
         static let launchAtLogin = "launchAtLogin"
@@ -28,17 +29,44 @@ final class SettingsService: SettingsServiceProtocol {
 
     var outputDirectoryURL: URL? {
         get async {
-            guard let path = defaults.string(forKey: Keys.outputDirectoryPath) else { return nil }
-            return URL(fileURLWithPath: path)
+            guard let bookmarkData = defaults.data(forKey: Keys.outputDirectoryBookmark) else {
+                return defaults.string(forKey: Keys.outputDirectoryPath).map { URL(fileURLWithPath: $0) }
+            }
+            var isStale = false
+            do {
+                let url = try URL(
+                    resolvingBookmarkData: bookmarkData,
+                    options: [.withSecurityScope],
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                )
+                if isStale {
+                    try? persistOutputDirectoryBookmark(url: url)
+                }
+                return url
+            } catch {
+                return defaults.string(forKey: Keys.outputDirectoryPath).map { URL(fileURLWithPath: $0) }
+            }
         }
     }
 
     func setOutputDirectory(_ url: URL?) async {
         guard let url = url else {
             defaults.removeObject(forKey: Keys.outputDirectoryPath)
+            defaults.removeObject(forKey: Keys.outputDirectoryBookmark)
             return
         }
         defaults.set(url.path, forKey: Keys.outputDirectoryPath)
+        try? persistOutputDirectoryBookmark(url: url)
+    }
+
+    private func persistOutputDirectoryBookmark(url: URL) throws {
+        let data = try url.bookmarkData(
+            options: .withSecurityScope,
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+        defaults.set(data, forKey: Keys.outputDirectoryBookmark)
     }
 
     var selectedWhisperModelID: String? {

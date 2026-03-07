@@ -14,13 +14,34 @@ protocol RecordingServiceProtocol: Sendable {
     var isRecording: Bool { get async }
 }
 
-enum RecordingError: Error {
+enum RecordingError: Error, LocalizedError {
     case notRecording
     case shareableContentUnavailable
     case displayNotFound
     case windowNotFound
     case streamStartFailed(Error)
     case writerFailed(Error)
+    /// 1フレームもキャプチャされなかった（writer を start していないため finish できない）
+    case noFramesCaptured
+
+    var errorDescription: String? {
+        switch self {
+        case .notRecording:
+            return "録画が開始されていません"
+        case .shareableContentUnavailable:
+            return "画面共有の取得に失敗しました"
+        case .displayNotFound:
+            return "ディスプレイが見つかりません"
+        case .windowNotFound:
+            return "ウィンドウが見つかりません"
+        case .streamStartFailed(let error):
+            return "キャプチャの開始に失敗しました: \(error.localizedDescription)"
+        case .writerFailed(let error):
+            return "動画の書き込みに失敗しました: \(error.localizedDescription)"
+        case .noFramesCaptured:
+            return "キャプチャされた映像がありません。権限や対象ウィンドウの状態を確認してください。"
+        }
+    }
 }
 
 // MARK: - Stream output (SCStreamOutput)
@@ -33,6 +54,8 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
 
     private var firstSampleTime: CMTime = .zero
     private var lastSampleBuffer: CMSampleBuffer?
+    /// 映像・音声のうち、書き込んだ最後のサンプル終了時刻（PTS+duration）の最大。endSession に使用。
+    private var lastWrittenEndTime: CMTime = .zero
     private var sessionStarted = false
     private let sessionStartedLock = NSLock()
 
@@ -90,6 +113,10 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
             videoInput.append(newBuffer)
         }
         lastSampleBuffer = newBuffer
+        let endTime = pts + duration
+        if CMTimeCompare(endTime, lastWrittenEndTime) > 0 {
+            lastWrittenEndTime = endTime
+        }
     }
 
     private func processAudioSample(_ sampleBuffer: CMSampleBuffer) {
@@ -121,6 +148,10 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
         )
         guard let newBuffer, audioInput.isReadyForMoreMediaData else { return }
         audioInput.append(newBuffer)
+        let endTime = pts + duration
+        if CMTimeCompare(endTime, lastWrittenEndTime) > 0 {
+            lastWrittenEndTime = endTime
+        }
     }
 
     func endSession() {
@@ -131,32 +162,23 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
         assetWriter.endSession(atSourceTime: lastTime)
     }
 
-    /// 最後のフレームを現在時刻で繰り返し、セッションを終了する（録画長を揃えるため）
-    func repeatLastFrameAndEndSession() {
+    /// セッション終了に使う endTime と、セッションが開始されていたかを返す。
+    /// 公式ドキュメント・Nonstrict ブログに従い、最後のフレームの PTS（セッション基準）で終了する。
+    /// - Returns: (sessionDidStart, endTime)
+    func getSessionEndTime() -> (Bool, CMTime) {
         sessionStartedLock.lock()
         defer { sessionStartedLock.unlock() }
-        guard sessionStarted else { return }
-        let now = CMClockGetTime(CMClock.hostTimeClock)
-        let elapsed = CMTimeSubtract(now, firstSampleTime)
-        if let original = lastSampleBuffer {
-            var timing = CMSampleTimingInfo(
-                duration: original.duration,
-                presentationTimeStamp: elapsed,
-                decodeTimeStamp: original.decodeTimeStamp
-            )
-            var extra: CMSampleBuffer?
-            CMSampleBufferCreateCopyWithNewTiming(
-                allocator: kCFAllocatorDefault,
-                sampleBuffer: original,
-                sampleTimingEntryCount: 1,
-                sampleTimingArray: &timing,
-                sampleBufferOut: &extra
-            )
-            if let extra, videoInput.isReadyForMoreMediaData {
-                videoInput.append(extra)
-            }
+        guard sessionStarted else { return (false, .zero) }
+        let lastPTS = lastSampleBuffer?.presentationTimeStamp ?? .zero
+        let endTime: CMTime
+        if lastPTS.isValid, CMTimeCompare(lastPTS, .zero) >= 0, lastPTS.timescale > 0 {
+            endTime = lastPTS
+        } else if CMTimeCompare(lastWrittenEndTime, .zero) > 0, lastWrittenEndTime.isValid, lastWrittenEndTime.timescale > 0 {
+            endTime = lastWrittenEndTime
+        } else {
+            endTime = CMTime(value: 1, timescale: 600)
         }
-        assetWriter.endSession(atSourceTime: elapsed)
+        return (true, endTime)
     }
 }
 
@@ -323,21 +345,44 @@ final class RecordingService: RecordingServiceProtocol {
 
         try await scStream.stopCapture()
 
+        // 公式ドキュメント・Nonstrict: ストリームは「サンプルを渡し終えた」時点で完了するが、
+        // 当方は videoQueue.async で処理しているため、キューをドレインしてから終了処理を行う。
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            videoQueue.async {
-                output.repeatLastFrameAndEndSession()
-                cont.resume()
+            videoQueue.async { cont.resume() }
+        }
+
+        // AVAssetWriter は「単一のスレッドまたはシリアルキュー」から使う必要がある（Apple ドキュメント）。
+        // ここから先は startWriting/append と同じ videoQueue 上で endSession → markAsFinished → finishWriting を行う。
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<URL, Error>) in
+            videoQueue.async { [url] in
+                let (sessionDidStart, endTime) = output.getSessionEndTime()
+                guard sessionDidStart else {
+                    writer.cancelWriting()
+                    try? FileManager.default.removeItem(at: url)
+                    cont.resume(throwing: RecordingError.noFramesCaptured)
+                    return
+                }
+                guard writer.status == .writing else {
+                    writer.cancelWriting()
+                    if let error = writer.error {
+                        cont.resume(throwing: RecordingError.writerFailed(error))
+                    } else {
+                        cont.resume(throwing: RecordingError.writerFailed(NSError(domain: AVFoundationErrorDomain, code: -11800, userInfo: [NSLocalizedDescriptionKey: "Writer status is not .writing"])))
+                    }
+                    return
+                }
+                writer.endSession(atSourceTime: endTime)
+                input.markAsFinished()
+                audioIn.markAsFinished()
+                writer.finishWriting {
+                    if writer.status == .failed, let error = writer.error {
+                        cont.resume(throwing: RecordingError.writerFailed(error))
+                    } else {
+                        cont.resume(returning: url)
+                    }
+                }
             }
         }
-
-        input.markAsFinished()
-        audioIn.markAsFinished()
-        await writer.finishWriting()
-
-        if writer.status == .failed, let error = writer.error {
-            throw RecordingError.writerFailed(error)
-        }
-        return url
     }
 
     private func downsizedVideoSize(source: CGSize, scaleFactor: Int) -> (Int, Int) {

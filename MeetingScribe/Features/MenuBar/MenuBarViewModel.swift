@@ -35,6 +35,8 @@ final class MenuBarViewModel: ObservableObject {
     private let recording: RecordingServiceProtocol
     private let settings: SettingsServiceProtocol
     private let pipeline: RecordingPipelineProtocol
+    /// 録画・パイプラインで使用中のセキュリティスコープ付き出力フォルダ（stop 時に stopAccessingSecurityScopedResource するため保持）
+    private var securityScopedOutputDirectory: URL?
 
     init(
         recording: RecordingServiceProtocol? = nil,
@@ -54,13 +56,21 @@ final class MenuBarViewModel: ObservableObject {
     func startRecording() {
         Task {
             do {
-                let outputDir = await settings.outputDirectoryURL ?? FileManager.default.temporaryDirectory
+                let outputDir: URL
+                if let settingsDir = await settings.outputDirectoryURL {
+                    settingsDir.startAccessingSecurityScopedResource()
+                    securityScopedOutputDirectory = settingsDir
+                    outputDir = settingsDir
+                } else {
+                    outputDir = FileManager.default.temporaryDirectory
+                }
                 let name = "recording_\(ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")).mp4"
                 let outputURL = outputDir.appendingPathComponent(name)
                 try await recording.startRecording(displayID: selectedDisplayID, windowID: selectedWindowID, outputURL: outputURL)
                 isRecording = true
                 errorMessage = nil
             } catch {
+                releaseSecurityScopedOutputDirectory()
                 errorMessage = error.localizedDescription
             }
         }
@@ -76,6 +86,14 @@ final class MenuBarViewModel: ObservableObject {
             } catch {
                 errorMessage = error.localizedDescription
             }
+            releaseSecurityScopedOutputDirectory()
+        }
+    }
+
+    private func releaseSecurityScopedOutputDirectory() {
+        if let url = securityScopedOutputDirectory {
+            url.stopAccessingSecurityScopedResource()
+            securityScopedOutputDirectory = nil
         }
     }
 
