@@ -14,8 +14,14 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 12) {
             WindowPickerView(
                 selectedDisplayID: $viewModel.selectedDisplayID,
-                selectedWindowID: $viewModel.selectedWindowID
+                selectedWindowID: $viewModel.selectedWindowID,
+                displayItems: viewModel.displayItems,
+                windowItems: viewModel.windowItems,
+                isLoadingContent: viewModel.isLoadingContent
             )
+            .task {
+                viewModel.loadShareableContent()
+            }
 
             Divider()
 

@@ -5,7 +5,22 @@
 
 import Combine
 import Foundation
+import ScreenCaptureKit
 import SwiftUI
+
+/// 録画対象として表示するディスプレイの表示用モデル
+struct DisplayItem: Identifiable {
+    let id: UInt32
+    let displayID: UInt32
+    let label: String
+}
+
+/// 録画対象として表示するウィンドウの表示用モデル
+struct WindowItem: Identifiable {
+    let id: UInt32
+    let windowID: UInt32
+    let label: String
+}
 
 @MainActor
 final class MenuBarViewModel: ObservableObject {
@@ -13,6 +28,9 @@ final class MenuBarViewModel: ObservableObject {
     @Published var selectedDisplayID: UInt32?
     @Published var selectedWindowID: UInt32?
     @Published var errorMessage: String?
+    @Published var displayItems: [DisplayItem] = []
+    @Published var windowItems: [WindowItem] = []
+    @Published var isLoadingContent = false
 
     private let recording: RecordingServiceProtocol
     private let settings: SettingsServiceProtocol
@@ -60,4 +78,56 @@ final class MenuBarViewModel: ObservableObject {
             }
         }
     }
+
+    /// ステータスメニュー表示時に、録画対象のディスプレイ・ウィンドウ一覧を取得する
+    func loadShareableContent() {
+        Task {
+            isLoadingContent = true
+            defer { isLoadingContent = false }
+            do {
+                let content = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<SCShareableContent, Error>) in
+                    SCShareableContent.getExcludingDesktopWindows(
+                        false,
+                        onScreenWindowsOnly: true
+                    ) { content, error in
+                        if let error {
+                            continuation.resume(throwing: error)
+                            return
+                        }
+                        guard let content else {
+                            continuation.resume(throwing: ShareableContentError.unavailable)
+                            return
+                        }
+                        continuation.resume(returning: content)
+                    }
+                }
+                displayItems = content.displays.map { display in
+                    DisplayItem(
+                        id: display.displayID,
+                        displayID: display.displayID,
+                        label: "ディスプレイ \(display.displayID)"
+                    )
+                }
+                windowItems = content.windows
+                    .filter { $0.isOnScreen }
+                    .map { window in
+                        let appName = window.owningApplication?.applicationName ?? "アプリ"
+                        let title = window.title?.isEmpty == false ? window.title! : "（無題）"
+                        return WindowItem(
+                            id: window.windowID,
+                            windowID: window.windowID,
+                            label: "\(appName) - \(title)"
+                        )
+                    }
+            } catch {
+                errorMessage = "録画対象の取得に失敗しました"
+                displayItems = []
+                windowItems = []
+            }
+        }
+    }
+}
+
+private enum ShareableContentError: Error {
+    case unavailable
 }
