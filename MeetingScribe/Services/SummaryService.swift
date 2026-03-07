@@ -5,8 +5,14 @@
 
 import Foundation
 
+/// 要約結果（会議タイトル + 要約本文）
+struct SummarizeResult: Sendable {
+    let title: String
+    let body: String
+}
+
 protocol SummaryServiceProtocol: Sendable {
-    func summarize(transcript: String, modelID: String) async throws -> String
+    func summarize(transcript: String, modelID: String) async throws -> SummarizeResult
     func fetchAvailableModelIDs() async throws -> [String]
 }
 
@@ -24,14 +30,20 @@ final class SummaryService: SummaryServiceProtocol {
         self.session = session
     }
 
-    func summarize(transcript: String, modelID: String) async throws -> String {
+    func summarize(transcript: String, modelID: String) async throws -> SummarizeResult {
         let url = baseURL.appendingPathComponent("api/generate")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = generateTimeout
 
-        let systemPrompt = "以下の会議の文字起こしを要約し、議題・決定事項・アクションアイテムに整理して出力してください。"
+        let systemPrompt = """
+            以下の会議の文字起こしを要約してください。
+            出力形式は必ず次のようにしてください：
+            1行目: 会議タイトルだけを1行で書く。
+            2行目: 空行。
+            3行目以降: 要約本文（議題・決定事項・アクションアイテムに整理して書く）。
+            """
         let prompt = systemPrompt + "\n\n" + transcript
 
         let body: [String: Any] = [
@@ -52,7 +64,24 @@ final class SummaryService: SummaryServiceProtocol {
         }
 
         let decoded = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
-        return decoded.response ?? ""
+        let raw = decoded.response ?? ""
+        return Self.parseSummarizeResult(raw)
+    }
+
+    /// LLM の応答を「1行目=タイトル、2行目以降=本文」でパースする
+    private static func parseSummarizeResult(_ raw: String) -> SummarizeResult {
+        let lines = raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let title: String
+        let body: String
+        if lines.isEmpty {
+            title = "無題"
+            body = ""
+        } else {
+            let first = lines[0].trimmingCharacters(in: .whitespaces)
+            title = first.isEmpty ? "無題" : first
+            body = lines.count > 1 ? lines[1...].joined(separator: "\n").trimmingCharacters(in: .whitespaces) : ""
+        }
+        return SummarizeResult(title: title, body: body)
     }
 
     func fetchAvailableModelIDs() async throws -> [String] {
