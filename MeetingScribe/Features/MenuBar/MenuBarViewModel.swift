@@ -147,6 +147,7 @@ final class MenuBarViewModel: ObservableObject {
                 }
                 windowItems = content.windows
                     .filter { $0.isOnScreen }
+                    .filter { !($0.owningApplication?.applicationName ?? "").hasPrefix("Control Center") }
                     .map { window in
                         let appName = window.owningApplication?.applicationName ?? "アプリ"
                         let title = window.title?.isEmpty == false ? window.title! : "（無題）"

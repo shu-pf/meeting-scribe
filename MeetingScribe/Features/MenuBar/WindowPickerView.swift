@@ -8,6 +8,7 @@ import SwiftUI
 struct WindowPickerView: View {
     @Binding var selectedDisplayID: UInt32?
     @Binding var selectedWindowID: UInt32?
+    @AppStorage("windowPickerSearchQuery") private var windowPickerSearchQuery: String = ""
 
     var displayItems: [DisplayItem] = []
     var windowItems: [WindowItem] = []
@@ -15,6 +16,12 @@ struct WindowPickerView: View {
 
     private var isFullScreenSelected: Bool {
         selectedDisplayID == nil && selectedWindowID == nil
+    }
+
+    private var filteredWindowItems: [WindowItem] {
+        let query = windowPickerSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty { return windowItems }
+        return windowItems.filter { $0.label.localizedStandardContains(query) }
     }
 
     var body: some View {
@@ -57,31 +64,45 @@ struct WindowPickerView: View {
                     Text("ウィンドウ")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField("検索", text: $windowPickerSearchQuery)
+                            .textFieldStyle(.roundedBorder)
+                    }
                     ScrollView(.vertical, showsIndicators: true) {
                         VStack(alignment: .leading, spacing: 4) {
-                            ForEach(windowItems, id: \WindowItem.id) { (item: WindowItem) in
-                                let isSelected = selectedWindowID == item.windowID
-                                Button {
-                                    selectedDisplayID = nil
-                                    selectedWindowID = item.windowID
-                                } label: {
-                                    HStack {
-                                        Text(item.label)
-                                            .lineLimit(1)
-                                            .truncationMode(.tail)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                        if isSelected {
-                                            Image(systemName: "checkmark.circle.fill")
-                                                .foregroundStyle(Color.accentColor)
+                            if filteredWindowItems.isEmpty {
+                                Text("該当するウィンドウがありません")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.vertical, 4)
+                            } else {
+                                ForEach(filteredWindowItems, id: \WindowItem.id) { (item: WindowItem) in
+                                    let isSelected = selectedWindowID == item.windowID
+                                    Button {
+                                        selectedDisplayID = nil
+                                        selectedWindowID = item.windowID
+                                    } label: {
+                                        HStack {
+                                            Text(item.label)
+                                                .lineLimit(1)
+                                                .truncationMode(.tail)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                            if isSelected {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .foregroundStyle(Color.accentColor)
+                                            }
                                         }
                                     }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
                         .frame(maxWidth: .infinity)
                     }
-                    .frame(maxHeight: 120)
+                    .frame(minHeight: 120, maxHeight: 120)
                 }
             }
         }
