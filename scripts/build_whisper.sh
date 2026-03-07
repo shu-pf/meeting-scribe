@@ -33,9 +33,10 @@ OUTPUT_DIR="$(dirname "$OUTPUT_BINARY")"
 mkdir -p "$OUTPUT_DIR"
 cp -f build/bin/whisper-cli "$OUTPUT_BINARY"
 
-# whisper-cli は libwhisper.1.dylib に動的リンクしているため、同じ Resources にコピーする
-while IFS= read -r -d '' dylib; do
+# whisper-cli は libwhisper.1.dylib のみ参照するため、それだけコピーする
+dylib="$(find build -maxdepth 4 -name 'libwhisper.1.dylib' 2>/dev/null | head -1)"
+if [[ -n "$dylib" && -f "$dylib" ]]; then
   cp -f "$dylib" "$OUTPUT_DIR/"
-  echo "Copied $(basename "$dylib") to $OUTPUT_DIR"
-done < <(find build -maxdepth 3 -name 'libwhisper*.dylib' -print0 2>/dev/null)
-echo "Copied to $OUTPUT_BINARY"
+  echo "Copied libwhisper.1.dylib to $OUTPUT_DIR"
+fi
+echo "Done: $OUTPUT_BINARY"
