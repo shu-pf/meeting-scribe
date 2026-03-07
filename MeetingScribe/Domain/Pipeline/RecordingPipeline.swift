@@ -71,6 +71,7 @@ final class RecordingPipeline: RecordingPipelineProtocol {
                 try fileManager.removeItem(at: recordingDestURL)
             }
             try fileManager.copyItem(at: fileURL, to: recordingDestURL)
+            try fileManager.removeItem(at: fileURL)
         }
 
         // 6. 文字起こしを baseName にリネーム（同一 path の場合はスキップ）
