@@ -7,7 +7,7 @@ import Foundation
 
 /// ダウンロード可能な Whisper モデル一覧と保存先を定義し、ダウンロード済み一覧を提供する。
 protocol WhisperModelStoreProtocol: Sendable {
-    /// ダウンロード可能なモデル ID 一覧（tiny, base, small, medium, large-v3 等）
+    /// ダウンロード可能なモデル ID 一覧（tiny, base, small, medium, large-v3, large-v3-turbo 等）
     var downloadableModelIDs: [String] { get }
     /// Application Support 配下の Whisper モデル用ディレクトリ URL
     func modelsDirectoryURL() throws -> URL
@@ -29,6 +29,7 @@ final class WhisperModelStore: WhisperModelStoreProtocol {
         "small",
         "medium",
         "large-v3",
+        "large-v3-turbo",
     ]
 
     private let fileManager = FileManager.default
