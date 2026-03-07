@@ -9,7 +9,8 @@ import Foundation
 /// 動画ファイルから音声を抽出し、一時 WAV ファイルに書き出す。
 enum AudioExtractor {
     /// 指定の動画 URL から音声を抽出し、一時 WAV ファイルの URL を返す。呼び出し側で削除すること。
-    static func extractWAV(from videoURL: URL) async throws -> URL {
+    /// - Parameter outputDirectory: 出力先ディレクトリ。nil の場合は temporaryDirectory（サブプロセスから見えない場合あり）
+    static func extractWAV(from videoURL: URL, outputDirectory: URL? = nil) async throws -> URL {
         let asset = AVURLAsset(url: videoURL)
         guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
             throw AudioExtractorError.noAudioTrack
@@ -29,7 +30,13 @@ enum AudioExtractor {
         reader.add(trackOutput)
         reader.startReading()
 
-        let tempDir = FileManager.default.temporaryDirectory
+        let tempDir: URL
+        if let dir = outputDirectory {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            tempDir = dir
+        } else {
+            tempDir = FileManager.default.temporaryDirectory
+        }
         let wavURL = tempDir.appendingPathComponent(UUID().uuidString + ".wav")
 
         var pcmData = Data()
@@ -45,7 +52,13 @@ enum AudioExtractor {
         let dataCount = pcmData.count
         let numSamples = dataCount / 2
         let header = makeWAVHeader(numSamples: numSamples, sampleRate: 16000, channels: 1, bitsPerSample: 16)
-        try (header + pcmData).write(to: wavURL)
+        let wavData = header + pcmData
+        guard FileManager.default.createFile(atPath: wavURL.path, contents: wavData) else {
+            throw AudioExtractorError.writeFailed(wavURL.path)
+        }
+        if !FileManager.default.fileExists(atPath: wavURL.path) {
+            throw AudioExtractorError.writeFailed("作成直後に fileExists=false: \(wavURL.path)")
+        }
         return wavURL
     }
 
@@ -71,6 +84,16 @@ enum AudioExtractor {
     }
 }
 
-enum AudioExtractorError: Error {
+enum AudioExtractorError: LocalizedError {
     case noAudioTrack
+    case writeFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .noAudioTrack:
+            return "音声トラックが見つかりません。"
+        case .writeFailed(let path):
+            return "音声ファイルの書き込みに失敗しました: \(path)"
+        }
+    }
 }

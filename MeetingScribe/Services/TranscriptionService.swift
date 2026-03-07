@@ -4,11 +4,17 @@
 //
 //  同梱 Whisper CLI 仕様: docs/WHISPER_CLI.md
 //  起動パス: Bundle.main/Contents/Resources/whisper
-//  引数: -m <モデル.bin> -f <入力WAV> -otxt -l auto
+//  引数: -m <モデル.bin> -otxt -l ja <入力WAV>
 //  出力: 標準出力にテキスト
 //
 
 import Foundation
+import os
+
+private let transcriptionLog = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "MeetingScribe",
+    category: "Transcription"
+)
 
 protocol TranscriptionServiceProtocol: Sendable {
     func transcribe(audioOrVideoURL: URL, modelID: String) async throws -> String
@@ -25,38 +31,111 @@ final class TranscriptionService: TranscriptionServiceProtocol {
     func transcribe(audioOrVideoURL: URL, modelID: String) async throws -> String {
         try Task.checkCancellation()
 
+        transcriptionLog.info("transcribe 開始 modelID=\(modelID, privacy: .public) input=\(audioOrVideoURL.path, privacy: .public)")
+
         let modelURL = await store.localFileURL(forModelID: modelID)
         guard let modelPath = modelURL?.path, FileManager.default.fileExists(atPath: modelPath) else {
+            transcriptionLog.error("モデルが見つからない modelID=\(modelID, privacy: .public) path=\(String(describing: modelURL?.path ?? "nil"), privacy: .public)")
             throw TranscriptionError.modelNotFound(modelID)
         }
+        transcriptionLog.debug("モデルパス modelPath=\(modelPath, privacy: .public)")
 
         let whisperURL = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Resources/whisper")
         guard FileManager.default.fileExists(atPath: whisperURL.path) else {
+            transcriptionLog.error("whisper バイナリ不在 path=\(whisperURL.path, privacy: .public)")
             throw TranscriptionError.whisperBinaryNotFound
+        }
+
+        let tmpDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("MeetingScribe/TranscriptionTemp", isDirectory: true)
+        let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("MeetingScribe/TranscriptionTemp", isDirectory: true)
+
+        transcriptionLog.debug("NSTemporaryDirectory=\(NSTemporaryDirectory(), privacy: .public) tmpDir=\(tmpDir.path, privacy: .public)")
+        transcriptionLog.debug("cachesDir=\(cachesDir.path, privacy: .public) (Containers=\(cachesDir.path.contains("Containers"), privacy: .public))")
+
+        let inSandbox = tmpDir.path.contains("Containers")
+        let transcriptionDir: URL
+        if inSandbox {
+            try FileManager.default.createDirectory(at: cachesDir, withIntermediateDirectories: true)
+            transcriptionDir = cachesDir
+            transcriptionLog.info("WAV 作業ディレクトリ: caches（サンドボックス検出）→ \(cachesDir.path, privacy: .public)")
+        } else if (try? FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)) != nil {
+            transcriptionDir = tmpDir
+            transcriptionLog.info("WAV 作業ディレクトリ: tmp → \(tmpDir.path, privacy: .public)")
+        } else {
+            try FileManager.default.createDirectory(at: cachesDir, withIntermediateDirectories: true)
+            transcriptionDir = cachesDir
+            transcriptionLog.info("WAV 作業ディレクトリ: caches（フォールバック）→ \(cachesDir.path, privacy: .public)")
         }
 
         let wavURL: URL
         if audioOrVideoURL.pathExtension.lowercased() == "wav" {
-            wavURL = audioOrVideoURL
+            wavURL = transcriptionDir.appendingPathComponent(UUID().uuidString + ".wav")
+            transcriptionLog.debug("WAV copy 開始 from=\(audioOrVideoURL.path, privacy: .public) to=\(wavURL.path, privacy: .public)")
+            try FileManager.default.copyItem(at: audioOrVideoURL, to: wavURL)
         } else {
-            wavURL = try await AudioExtractor.extractWAV(from: audioOrVideoURL)
-            defer { try? FileManager.default.removeItem(at: wavURL) }
+            transcriptionLog.debug("WAV extract 開始 outputDir=\(transcriptionDir.path, privacy: .public)")
+            wavURL = try await AudioExtractor.extractWAV(from: audioOrVideoURL, outputDirectory: transcriptionDir)
         }
+
+        var wavURLToUse = wavURL
+        let wavExists = FileManager.default.fileExists(atPath: wavURL.path)
+        let dirContents = (try? FileManager.default.contentsOfDirectory(atPath: transcriptionDir.path)) ?? []
+        transcriptionLog.info("WAV 作成後 wavURL=\(wavURL.path, privacy: .public) fileExists=\(wavExists, privacy: .public) dirContents=\(dirContents.joined(separator: ", "), privacy: .public)")
+
+        if !wavExists, let singleWav = dirContents.filter({ $0.lowercased().hasSuffix(".wav") }).onlyOne {
+            let fallbackURL = transcriptionDir.appendingPathComponent(singleWav)
+            if FileManager.default.fileExists(atPath: fallbackURL.path) {
+                transcriptionLog.info("fileExists フォールバック: \(singleWav, privacy: .public) を使用")
+                wavURLToUse = fallbackURL
+            }
+        }
+        defer { try? FileManager.default.removeItem(at: wavURLToUse) }
 
         try Task.checkCancellation()
 
+        let resourcesURL = whisperURL.deletingLastPathComponent()
+        var env = ProcessInfo.processInfo.environment
+        let existingPath = env["DYLD_LIBRARY_PATH"] ?? ""
+        let newPath = [resourcesURL.path, existingPath].filter { !$0.isEmpty }.joined(separator: ":")
+        env["DYLD_LIBRARY_PATH"] = newPath
+
+        let wavResolved = wavURLToUse.resolvingSymlinksInPath()
+        let wavDir = wavResolved.deletingLastPathComponent()
+        let wavFileName = wavResolved.lastPathComponent
+        let modelResolved = URL(fileURLWithPath: modelPath).resolvingSymlinksInPath()
+        let modelPathResolved = modelResolved.path
+
+        let wavExistsResolved = FileManager.default.fileExists(atPath: wavResolved.path)
+        transcriptionLog.info("Process 起動前 wavResolved=\(wavResolved.path, privacy: .public) fileExists=\(wavExistsResolved, privacy: .public) currentDir=\(wavDir.path, privacy: .public) arg=\(wavFileName, privacy: .public)")
+
+        guard wavExistsResolved else {
+            transcriptionLog.error("音声ファイル不在のため throw wavResolved=\(wavResolved.path, privacy: .public)")
+            throw TranscriptionError.processFailed(exitCode: -1, stderr: "音声ファイルが存在しません: \(wavResolved.path)")
+        }
+        guard FileManager.default.fileExists(atPath: modelPathResolved) else {
+            transcriptionLog.error("モデルファイル不在のため throw path=\(modelPathResolved, privacy: .public)")
+            throw TranscriptionError.processFailed(exitCode: -1, stderr: "モデルファイルが存在しません: \(modelPathResolved)")
+        }
+
         let process = Process()
         process.executableURL = whisperURL
+        process.environment = env
+        process.currentDirectoryURL = wavDir
         process.arguments = [
-            "-m", modelPath,
-            "-f", wavURL.path,
+            "-m", modelPathResolved,
             "-otxt",
-            "-l", "auto",
+            "-l", "ja",
+            wavFileName,
         ]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
+        transcriptionLog.info("Process 起動 executable=\(whisperURL.path, privacy: .public) cwd=\(wavDir.path, privacy: .public) args=\(process.arguments ?? [], privacy: .public)")
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
 
         try process.run()
 
@@ -76,12 +155,15 @@ final class TranscriptionService: TranscriptionServiceProtocol {
             }
 
             process.terminationHandler = { _ in
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let text = (String(data: data, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                let text = (String(data: outData, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let stderrText = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                transcriptionLog.info("Process 終了 status=\(process.terminationStatus) stdoutLen=\(text.count) stderr=\(stderrText, privacy: .public)")
                 if process.terminationStatus == 0 {
                     resumeOnce(with: .success(text))
                 } else {
-                    resumeOnce(with: .failure(TranscriptionError.processFailed(exitCode: Int(process.terminationStatus))))
+                    resumeOnce(with: .failure(TranscriptionError.processFailed(exitCode: Int(process.terminationStatus), stderr: stderrText.isEmpty ? nil : stderrText)))
                 }
             }
 
@@ -104,10 +186,36 @@ final class TranscriptionService: TranscriptionServiceProtocol {
     }
 }
 
-enum TranscriptionError: Error {
+enum TranscriptionError: LocalizedError {
     case modelNotFound(String)
     case whisperBinaryNotFound
     case outputEncodingFailed
     case timeout
-    case processFailed(exitCode: Int)
+    case processFailed(exitCode: Int, stderr: String?)
+
+    var errorDescription: String? {
+        switch self {
+        case .modelNotFound(let id):
+            return "文字起こし用のモデル「\(id)」が見つかりません。設定でモデルをダウンロードしてください。"
+        case .whisperBinaryNotFound:
+            return "Whisper の実行ファイルが見つかりません。scripts/build_whisper.sh を実行してバイナリを用意してください。"
+        case .outputEncodingFailed:
+            return "文字起こし結果の取得に失敗しました。"
+        case .timeout:
+            return "文字起こしがタイムアウトしました。"
+        case .processFailed(let code, let stderr):
+            var msg = "文字起こしに失敗しました（終了コード: \(code)）。"
+            if let stderr, !stderr.isEmpty {
+                msg += " " + stderr
+            }
+            return msg
+        }
+    }
+}
+
+private extension Array {
+    /// 要素が1つだけならその要素を返し、それ以外は nil。
+    var onlyOne: Element? {
+        count == 1 ? first : nil
+    }
 }
