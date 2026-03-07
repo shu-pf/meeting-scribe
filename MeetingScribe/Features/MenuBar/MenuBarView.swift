@@ -7,6 +7,7 @@ import SwiftUI
 
 @MainActor
 struct MenuBarView: View {
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var viewModel = MenuBarViewModel()
 
     var body: some View {
@@ -49,12 +50,7 @@ struct MenuBarView: View {
 
     private func openSettings() {
         NSApp.activate(ignoringOtherApps: true)
-        for window in NSApp.windows {
-            if window.canBecomeMain {
-                window.makeKeyAndOrderFront(nil)
-                return
-            }
-        }
+        openWindow(id: "settings")
     }
 }
 
