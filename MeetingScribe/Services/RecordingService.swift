@@ -293,6 +293,18 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
     }
 }
 
+/// videoQueue.async の @Sendable クロージャで writer/input/output を渡すためのラッパー（同一キュー内でのみ使用）
+private final class WriterFinishContext: @unchecked Sendable {
+    let writer: AVAssetWriter
+    let input: AVAssetWriterInput
+    let output: RecordingStreamOutput
+    init(writer: AVAssetWriter, input: AVAssetWriterInput, output: RecordingStreamOutput) {
+        self.writer = writer
+        self.input = input
+        self.output = output
+    }
+}
+
 // MARK: - RecordingService
 
 @MainActor
@@ -478,23 +490,24 @@ final class RecordingService: RecordingServiceProtocol {
 
         // AVAssetWriter は「単一のスレッドまたはシリアルキュー」から使う必要がある（Apple ドキュメント）。
         // ここから先は startWriting/append と同じ videoQueue 上で endSession → markAsFinished → finishWriting を行う。
+        let ctx = WriterFinishContext(writer: writer, input: input, output: output)
         return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<URL, Error>) in
-            videoQueue.async { [url] in
-                let (sessionDidStart, endTime) = output.getSessionEndTime()
-                recordingLog.info("stopRecording(videoQueue): sessionDidStart=\(sessionDidStart) endTime=\(endTime.seconds) endTimeTimescale=\(endTime.timescale) writer.status=\(String(describing: writer.status))")
+            videoQueue.async { [url, ctx] in
+                let (sessionDidStart, endTime) = ctx.output.getSessionEndTime()
+                recordingLog.info("stopRecording(videoQueue): sessionDidStart=\(sessionDidStart) endTime=\(endTime.seconds) endTimeTimescale=\(endTime.timescale) writer.status=\(String(describing: ctx.writer.status))")
 
                 guard sessionDidStart else {
                     recordingLog.error("stopRecording: 1フレームもキャプチャされず（noFramesCaptured）、ファイル削除して終了")
-                    writer.cancelWriting()
+                    ctx.writer.cancelWriting()
                     try? FileManager.default.removeItem(at: url)
                     cont.resume(throwing: RecordingError.noFramesCaptured)
                     return
                 }
-                guard writer.status == .writing else {
-                    let err = writer.error
-                    recordingLog.error("stopRecording: writer.status が .writing でない status=\(String(describing: writer.status)) error=\(String(describing: err)) \(Self.describeError(err))")
-                    writer.cancelWriting()
-                    if let error = writer.error {
+                guard ctx.writer.status == .writing else {
+                    let err = ctx.writer.error
+                    recordingLog.error("stopRecording: writer.status が .writing でない status=\(String(describing: ctx.writer.status)) error=\(String(describing: err)) \(RecordingService.describeError(err))")
+                    ctx.writer.cancelWriting()
+                    if let error = ctx.writer.error {
                         cont.resume(throwing: RecordingError.writerFailed(error))
                     } else {
                         cont.resume(throwing: RecordingError.writerFailed(NSError(domain: AVFoundationErrorDomain, code: -11800, userInfo: [NSLocalizedDescriptionKey: "Writer status is not .writing"])))
@@ -502,14 +515,13 @@ final class RecordingService: RecordingServiceProtocol {
                     return
                 }
                 recordingLog.info("stopRecording: endSession(atSourceTime: \(endTime.seconds)) → markAsFinished → finishWriting 開始")
-                writer.endSession(atSourceTime: endTime)
-                input.markAsFinished()
-                output.audioInput?.markAsFinished()
-                writer.finishWriting {
-                    let status = writer.status
-                    let err = writer.error
-                    if status == .failed, let error = writer.error {
-                        recordingLog.error("stopRecording: finishWriting 完了コールバックで失敗 status=\(String(describing: status)) error=\(String(describing: error)) \(Self.describeError(error))")
+                ctx.writer.endSession(atSourceTime: endTime)
+                ctx.input.markAsFinished()
+                ctx.output.audioInput?.markAsFinished()
+                ctx.writer.finishWriting {
+                    let status = ctx.writer.status
+                    if status == .failed, let error = ctx.writer.error {
+                        recordingLog.error("stopRecording: finishWriting 完了コールバックで失敗 status=\(String(describing: status)) error=\(String(describing: error)) \(RecordingService.describeError(error))")
                         cont.resume(throwing: RecordingError.writerFailed(error))
                     } else {
                         recordingLog.info("stopRecording: finishWriting 成功 status=\(String(describing: status)) url=\(url.path)")
@@ -521,7 +533,7 @@ final class RecordingService: RecordingServiceProtocol {
     }
 
     /// デバッグ用: Error の domain/code/description を文字列化
-    private static func describeError(_ error: Error?) -> String {
+    private nonisolated static func describeError(_ error: Error?) -> String {
         guard let error else { return "nil" }
         if let ne = error as NSError? {
             return "domain=\(ne.domain) code=\(ne.code) desc=\(ne.localizedDescription)"

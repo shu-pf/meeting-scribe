@@ -58,7 +58,7 @@ final class MenuBarViewModel: ObservableObject {
             do {
                 let outputDir: URL
                 if let settingsDir = await settings.outputDirectoryURL {
-                    settingsDir.startAccessingSecurityScopedResource()
+                    _ = settingsDir.startAccessingSecurityScopedResource()
                     securityScopedOutputDirectory = settingsDir
                     outputDir = settingsDir
                 } else {
