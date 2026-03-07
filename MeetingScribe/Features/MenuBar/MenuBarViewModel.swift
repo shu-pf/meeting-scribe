@@ -19,16 +19,17 @@ final class MenuBarViewModel: ObservableObject {
     private let pipeline: RecordingPipelineProtocol
 
     init(
-        recording: RecordingServiceProtocol = RecordingService(),
-        settings: SettingsServiceProtocol = SettingsService(),
+        recording: RecordingServiceProtocol? = nil,
+        settings: SettingsServiceProtocol? = nil,
         pipeline: RecordingPipelineProtocol? = nil
     ) {
-        self.recording = recording
-        self.settings = settings
+        let settingsInstance = settings ?? SettingsService()
+        self.recording = recording ?? RecordingService()
+        self.settings = settingsInstance
         self.pipeline = pipeline ?? RecordingPipeline(
             transcription: TranscriptionService(),
             summary: SummaryService(),
-            settings: settings
+            settings: settingsInstance
         )
     }
 

@@ -18,8 +18,8 @@ final class SettingsViewModel: ObservableObject {
 
     private let settings: SettingsServiceProtocol
 
-    init(settings: SettingsServiceProtocol = SettingsService()) {
-        self.settings = settings
+    init(settings: SettingsServiceProtocol? = nil) {
+        self.settings = settings ?? SettingsService()
     }
 
     func load() async {

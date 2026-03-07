@@ -5,6 +5,7 @@
 
 import SwiftUI
 
+@MainActor
 struct MenuBarView: View {
     @StateObject private var viewModel = MenuBarViewModel()
 
