@@ -54,13 +54,15 @@ final class RecordingPipeline: RecordingPipelineProtocol {
             }
             try fileManager.copyItem(at: fileURL, to: recordingDestURL)
         }
-        let transcriptURL = outputDir.appendingPathComponent("\(baseName)_transcript.txt")
-        let summaryURL = outputDir.appendingPathComponent("\(baseName)_summary.txt")
+        let transcriptURL = outputDir.appendingPathComponent("\(baseName)_transcript.md")
+        let summaryURL = outputDir.appendingPathComponent("\(baseName)_summary.md")
         if let t = result.transcript {
-            try t.write(to: transcriptURL, atomically: true, encoding: .utf8)
+            let markdown = "# 文字起こし\n\n\(t)"
+            try markdown.write(to: transcriptURL, atomically: true, encoding: .utf8)
         }
         if let s = result.summaryText {
-            try s.write(to: summaryURL, atomically: true, encoding: .utf8)
+            let markdown = "# 要約\n\n\(s)"
+            try markdown.write(to: summaryURL, atomically: true, encoding: .utf8)
         }
     }
 }
