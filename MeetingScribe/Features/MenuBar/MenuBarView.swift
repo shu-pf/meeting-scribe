@@ -19,6 +19,8 @@ struct MenuBarView: View {
                 windowItems: viewModel.windowItems,
                 isLoadingContent: viewModel.isLoadingContent
             )
+            .disabled(viewModel.isRecording)
+            .opacity(viewModel.isRecording ? 0.6 : 1)
             .task {
                 viewModel.loadShareableContent()
             }
