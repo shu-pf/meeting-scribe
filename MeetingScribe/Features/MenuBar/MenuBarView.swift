@@ -43,6 +43,8 @@ struct MenuBarView: View {
                     Label("録画を開始", systemImage: "record.circle")
                 }
                 .buttonStyle(.bordered)
+                .disabled(!viewModel.isOutputDirectorySet)
+                .opacity(viewModel.isOutputDirectorySet ? 1 : 0.6)
             }
 
             switch viewModel.pipelineStatus {

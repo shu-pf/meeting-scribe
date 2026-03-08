@@ -57,7 +57,7 @@ final class SettingsService: SettingsServiceProtocol {
             if let path = defaults.string(forKey: Keys.outputDirectoryPath) {
                 return URL(fileURLWithPath: path)
             }
-            return FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
+            return nil
         }
     }
 

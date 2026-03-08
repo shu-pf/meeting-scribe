@@ -41,6 +41,8 @@ final class MenuBarViewModel: ObservableObject {
     @Published var windowItems: [WindowItem] = []
     @Published var isLoadingContent = false
     @Published var pipelineStatus: PipelineStatus = .idle
+    /// 出力フォルダが設定済みか（未設定の場合は録画開始不可）
+    @Published var isOutputDirectorySet = false
 
     private let recording: RecordingServiceProtocol
     private let settings: SettingsServiceProtocol
@@ -66,14 +68,13 @@ final class MenuBarViewModel: ObservableObject {
     func startRecording() {
         Task {
             do {
-                let outputDir: URL
-                if let settingsDir = await settings.outputDirectoryURL {
-                    _ = settingsDir.startAccessingSecurityScopedResource()
-                    securityScopedOutputDirectory = settingsDir
-                    outputDir = settingsDir
-                } else {
-                    outputDir = FileManager.default.temporaryDirectory
+                guard let settingsDir = await settings.outputDirectoryURL else {
+                    errorMessage = "出力フォルダが未設定です。設定から出力フォルダを選択してください。"
+                    return
                 }
+                _ = settingsDir.startAccessingSecurityScopedResource()
+                securityScopedOutputDirectory = settingsDir
+                let outputDir = settingsDir
                 let name = "recording_\(ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")).mp4"
                 let outputURL = outputDir.appendingPathComponent(name)
                 try await recording.startRecording(displayID: selectedDisplayID, windowID: selectedWindowID, outputURL: outputURL)
@@ -121,6 +122,7 @@ final class MenuBarViewModel: ObservableObject {
         Task {
             isLoadingContent = true
             defer { isLoadingContent = false }
+            isOutputDirectorySet = await settings.outputDirectoryURL != nil
             do {
                 let content = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<SCShareableContent, Error>) in
                     SCShareableContent.getExcludingDesktopWindows(
