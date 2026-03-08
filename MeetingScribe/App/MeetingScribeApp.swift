@@ -23,7 +23,7 @@ struct MeetingScribeApp: App {
             ContentView()
         }
         .windowStyle(.automatic)
-        .defaultSize(width: 480, height: 400)
+        .defaultSize(width: 480, height: 540)
         .commandsRemoved()
     }
 }

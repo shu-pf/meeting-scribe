@@ -37,24 +37,27 @@ final class SettingsService: SettingsServiceProtocol {
 
     var outputDirectoryURL: URL? {
         get async {
-            guard let bookmarkData = defaults.data(forKey: Keys.outputDirectoryBookmark) else {
-                return defaults.string(forKey: Keys.outputDirectoryPath).map { URL(fileURLWithPath: $0) }
-            }
-            var isStale = false
-            do {
-                let url = try URL(
-                    resolvingBookmarkData: bookmarkData,
-                    options: [.withSecurityScope],
-                    relativeTo: nil,
-                    bookmarkDataIsStale: &isStale
-                )
-                if isStale {
-                    try? persistOutputDirectoryBookmark(url: url)
+            if let bookmarkData = defaults.data(forKey: Keys.outputDirectoryBookmark) {
+                var isStale = false
+                do {
+                    let url = try URL(
+                        resolvingBookmarkData: bookmarkData,
+                        options: [.withSecurityScope],
+                        relativeTo: nil,
+                        bookmarkDataIsStale: &isStale
+                    )
+                    if isStale {
+                        try? persistOutputDirectoryBookmark(url: url)
+                    }
+                    return url
+                } catch {
+                    return defaults.string(forKey: Keys.outputDirectoryPath).map { URL(fileURLWithPath: $0) }
                 }
-                return url
-            } catch {
-                return defaults.string(forKey: Keys.outputDirectoryPath).map { URL(fileURLWithPath: $0) }
             }
+            if let path = defaults.string(forKey: Keys.outputDirectoryPath) {
+                return URL(fileURLWithPath: path)
+            }
+            return FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
         }
     }
 

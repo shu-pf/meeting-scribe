@@ -13,6 +13,9 @@ private struct ContextLengthPreset {
 
 @MainActor
 struct SettingsView: View {
+    /// ガイダンスを閉じたあと、Whisper モデル未設定ならダウンロード画面を出すためのトリガー（ContentView から渡す）
+    @Binding var triggerWhisperSheetAfterGuidance: Bool
+
     private static let contextLengthPresets: [ContextLengthPreset] = [
         ContextLengthPreset(label: "4K", value: 4_096),
         ContextLengthPreset(label: "8K", value: 8_192),
@@ -28,6 +31,7 @@ struct SettingsView: View {
         summaryService: SummaryService()
     )
     @State private var whisperDownloader = WhisperModelDownloader()
+    private let settings = SettingsService()
 
     var body: some View {
         Form {
@@ -86,11 +90,22 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(minWidth: 400, minHeight: 320)
+        .frame(minWidth: 400, minHeight: 440)
         .task {
             await viewModel.load()
-            if await viewModel.shouldShowWhisperModelDownloadSheet() {
+            if await settings.hasSeenFirstLaunchGuidance,
+               await viewModel.shouldShowWhisperModelDownloadSheet() {
                 viewModel.showWhisperModelDownloadSheet = true
+            }
+        }
+        .onChange(of: triggerWhisperSheetAfterGuidance) { _, newValue in
+            guard newValue else { return }
+            Task {
+                await viewModel.load()
+                if await viewModel.shouldShowWhisperModelDownloadSheet() {
+                    viewModel.showWhisperModelDownloadSheet = true
+                }
+                triggerWhisperSheetAfterGuidance = false
             }
         }
         .sheet(isPresented: $viewModel.showWhisperModelDownloadSheet) {
@@ -120,6 +135,6 @@ struct SettingsView: View {
 }
 
 #Preview {
-    SettingsView()
+    SettingsView(triggerWhisperSheetAfterGuidance: .constant(false))
         .frame(width: 450, height: 400)
 }
