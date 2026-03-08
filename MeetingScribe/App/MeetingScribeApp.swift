@@ -16,6 +16,7 @@ struct MeetingScribeApp: App {
             MenuBarView(viewModel: menuBarViewModel)
         } label: {
             Image(systemName: "menubar.dock.rectangle")
+                .background(FirstLaunchTriggerView())
         }
         .menuBarExtraStyle(.window)
 

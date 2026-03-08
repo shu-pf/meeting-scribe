@@ -9,7 +9,6 @@ import SwiftUI
 struct MenuBarView: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var viewModel: MenuBarViewModel
-    private let settings = SettingsService()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -24,11 +23,6 @@ struct MenuBarView: View {
             .opacity(viewModel.isRecording ? 0.6 : 1)
             .task {
                 viewModel.loadShareableContent()
-            }
-            .task {
-                if await !settings.hasSeenFirstLaunchGuidance {
-                    openSettings()
-                }
             }
 
             Divider()
