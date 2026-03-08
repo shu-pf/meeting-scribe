@@ -47,9 +47,19 @@ struct MenuBarView: View {
                 .opacity(viewModel.isOutputDirectorySet ? 1 : 0.6)
             }
 
+            if !viewModel.isRecording, !viewModel.isOutputDirectorySet {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("出力フォルダが未設定です。")
+                    Text("設定から出力フォルダを選択してください。")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             switch viewModel.pipelineStatus {
             case .idle:
-                if let message = viewModel.errorMessage {
+                if viewModel.isOutputDirectorySet, let message = viewModel.errorMessage {
                     Text(message)
                         .font(.caption)
                         .foregroundStyle(.red)
