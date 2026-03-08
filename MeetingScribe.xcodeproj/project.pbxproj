@@ -124,18 +124,27 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(PROJECT_DIR)/MeetingScribe/Resources",
+				"$(PROJECT_DIR)/MeetingScribe/Resources/libggml.0.dylib",
+				"$(PROJECT_DIR)/MeetingScribe/Resources/libggml-base.0.dylib",
+				"$(PROJECT_DIR)/MeetingScribe/Resources/libggml-blas.0.dylib",
+				"$(PROJECT_DIR)/MeetingScribe/Resources/libggml-cpu.0.dylib",
+				"$(PROJECT_DIR)/MeetingScribe/Resources/libggml-metal.0.dylib",
 				"$(PROJECT_DIR)/MeetingScribe/Resources/libwhisper.1.dylib",
 			);
 			name = "Copy Whisper to Resources";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(WRAPPER_NAME)/Contents/Resources/libggml.0.dylib",
+				"$(BUILT_PRODUCTS_DIR)/$(WRAPPER_NAME)/Contents/Resources/libggml-base.0.dylib",
+				"$(BUILT_PRODUCTS_DIR)/$(WRAPPER_NAME)/Contents/Resources/libggml-blas.0.dylib",
+				"$(BUILT_PRODUCTS_DIR)/$(WRAPPER_NAME)/Contents/Resources/libggml-cpu.0.dylib",
+				"$(BUILT_PRODUCTS_DIR)/$(WRAPPER_NAME)/Contents/Resources/libggml-metal.0.dylib",
 				"$(BUILT_PRODUCTS_DIR)/$(WRAPPER_NAME)/Contents/Resources/libwhisper.1.dylib",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "RESOURCES_SRC=\"${PROJECT_DIR}/MeetingScribe/Resources\"\nRESOURCES_DST=\"${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Contents/Resources\"\nmkdir -p \"${RESOURCES_DST}\"\nfor f in \"${RESOURCES_SRC}\"/libwhisper*.dylib; do\n  [ -e \"$f\" ] && cp -f \"$f\" \"${RESOURCES_DST}/\"\ndone\n";
+			shellScript = "RESOURCES_SRC=\"${PROJECT_DIR}/MeetingScribe/Resources\"\nRESOURCES_DST=\"${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Contents/Resources\"\nmkdir -p \"${RESOURCES_DST}\"\nfor f in \"${RESOURCES_SRC}\"/*.dylib; do\n  [ -e \"$f\" ] && cp -f \"$f\" \"${RESOURCES_DST}/\"\ndone\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
