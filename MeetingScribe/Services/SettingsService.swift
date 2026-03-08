@@ -16,6 +16,8 @@ protocol SettingsServiceProtocol: Sendable {
     func setLaunchAtLogin(_ enabled: Bool) async
     var hasSeenFirstLaunchGuidance: Bool { get async }
     func setHasSeenFirstLaunchGuidance(_ value: Bool) async
+    var summaryContextLength: Int { get async }
+    func setSummaryContextLength(_ value: Int) async
 }
 
 final class SettingsService: SettingsServiceProtocol {
@@ -28,7 +30,10 @@ final class SettingsService: SettingsServiceProtocol {
         static let selectedSummaryModelID = "selectedSummaryModelID"
         static let launchAtLogin = "launchAtLogin"
         static let hasSeenFirstLaunchGuidance = "hasSeenFirstLaunchGuidance"
+        static let summaryContextLength = "summaryContextLength"
     }
+
+    private static let defaultSummaryContextLength = 131_072
 
     var outputDirectoryURL: URL? {
         get async {
@@ -104,5 +109,19 @@ final class SettingsService: SettingsServiceProtocol {
 
     func setHasSeenFirstLaunchGuidance(_ value: Bool) async {
         defaults.set(value, forKey: Keys.hasSeenFirstLaunchGuidance)
+    }
+
+    var summaryContextLength: Int {
+        get async {
+            let key = Keys.summaryContextLength
+            guard defaults.object(forKey: key) != nil else {
+                return Self.defaultSummaryContextLength
+            }
+            return defaults.integer(forKey: key)
+        }
+    }
+
+    func setSummaryContextLength(_ value: Int) async {
+        defaults.set(value, forKey: Keys.summaryContextLength)
     }
 }

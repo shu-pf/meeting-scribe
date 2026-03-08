@@ -12,7 +12,7 @@ struct SummarizeResult: Sendable {
 }
 
 protocol SummaryServiceProtocol: Sendable {
-    func summarize(transcript: String, modelID: String) async throws -> SummarizeResult
+    func summarize(transcript: String, modelID: String, numCtx: Int?) async throws -> SummarizeResult
     func fetchAvailableModelIDs() async throws -> [String]
 }
 
@@ -34,7 +34,7 @@ final class SummaryService: SummaryServiceProtocol {
         self.session = session
     }
 
-    func summarize(transcript: String, modelID: String) async throws -> SummarizeResult {
+    func summarize(transcript: String, modelID: String, numCtx: Int? = nil) async throws -> SummarizeResult {
         let url = baseURL.appendingPathComponent("api/generate")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -50,12 +50,13 @@ final class SummaryService: SummaryServiceProtocol {
             """
         let prompt = systemPrompt + "\n\n" + transcript
 
+        let ctx = numCtx ?? defaultNumCtx
         let body: [String: Any] = [
             "model": modelID,
             "prompt": prompt,
             "stream": false,
             "options": [
-                "num_ctx": defaultNumCtx,
+                "num_ctx": ctx,
                 "num_predict": defaultNumPredict
             ] as [String: Any]
         ]

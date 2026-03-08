@@ -52,7 +52,8 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         let meetingTitle: String
         var summaryResult: SummarizeResult?
         if let summaryModelID = await settings.selectedSummaryModelID, !summaryModelID.isEmpty {
-            let result = try await summary.summarize(transcript: transcript, modelID: summaryModelID)
+            let numCtx = await settings.summaryContextLength
+            let result = try await summary.summarize(transcript: transcript, modelID: summaryModelID, numCtx: numCtx)
             summaryResult = result
             meetingTitle = result.title
         } else {

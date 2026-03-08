@@ -6,8 +6,23 @@
 import SwiftUI
 import AppKit
 
+private struct ContextLengthPreset {
+    let label: String
+    let value: Int
+}
+
 @MainActor
 struct SettingsView: View {
+    private static let contextLengthPresets: [ContextLengthPreset] = [
+        ContextLengthPreset(label: "4K", value: 4_096),
+        ContextLengthPreset(label: "8K", value: 8_192),
+        ContextLengthPreset(label: "16K", value: 16_384),
+        ContextLengthPreset(label: "32K", value: 32_768),
+        ContextLengthPreset(label: "64K", value: 65_536),
+        ContextLengthPreset(label: "128K", value: 131_072),
+        ContextLengthPreset(label: "256K", value: 262_144)
+    ]
+
     @StateObject private var viewModel = SettingsViewModel(
         whisperModelStore: WhisperModelStore.shared,
         summaryService: SummaryService()
@@ -52,6 +67,14 @@ struct SettingsView: View {
                     Text("未選択").tag("")
                     ForEach(viewModel.summaryModelIDs, id: \.self) { id in
                         Text(id).tag(id)
+                    }
+                }
+                Picker("最大コンテキスト", selection: Binding(
+                    get: { viewModel.summaryContextLength },
+                    set: { new in Task { await viewModel.setSummaryContextLength(new) } }
+                )) {
+                    ForEach(Self.contextLengthPresets, id: \.value) { preset in
+                        Text(preset.label).tag(preset.value)
                     }
                 }
             }

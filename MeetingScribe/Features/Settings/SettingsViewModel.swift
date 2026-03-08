@@ -16,6 +16,7 @@ final class SettingsViewModel: ObservableObject {
     @Published var launchAtLogin: Bool = false
     @Published var whisperModelIDs: [String] = []
     @Published var summaryModelIDs: [String] = []
+    @Published var summaryContextLength: Int = 131_072
     @Published var showWhisperModelDownloadSheet: Bool = false
 
     private let settings: SettingsServiceProtocol
@@ -40,6 +41,7 @@ final class SettingsViewModel: ObservableObject {
         }
         selectedWhisperModelID = await settings.selectedWhisperModelID ?? ""
         selectedSummaryModelID = await settings.selectedSummaryModelID ?? ""
+        summaryContextLength = await settings.summaryContextLength
         if #available(macOS 13.0, *) {
             let enabled = SMAppService.mainApp.status == .enabled
             launchAtLogin = enabled
@@ -80,6 +82,11 @@ final class SettingsViewModel: ObservableObject {
     func setSelectedSummaryModelID(_ id: String) async {
         await settings.setSelectedSummaryModelID(id.isEmpty ? nil : id)
         selectedSummaryModelID = id
+    }
+
+    func setSummaryContextLength(_ value: Int) async {
+        await settings.setSummaryContextLength(value)
+        summaryContextLength = value
     }
 
     func setLaunchAtLogin(_ enabled: Bool) async {
