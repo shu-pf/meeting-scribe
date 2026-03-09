@@ -35,7 +35,7 @@ private func makeAACOutputSettings(from formatDesc: CMFormatDescription) -> [Str
 private let recordingLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "MeetingScribe", category: "Recording")
 
 protocol RecordingServiceProtocol: Sendable {
-    func startRecording(displayID: UInt32?, windowID: UInt32?, outputURL: URL) async throws
+    func startRecording(displayID: UInt32?, windowID: UInt32?, outputURL: URL, onStreamStoppedUnexpectedly: (@Sendable (Result<URL, Error>) -> Void)?) async throws
     func stopRecording() async throws -> URL
     var isRecording: Bool { get async }
 }
@@ -293,6 +293,22 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
     }
 }
 
+// MARK: - Stream delegate (SCStreamDelegate)
+
+/// ストリームがシステム側で停止したとき（例: 録画元ウィンドウが閉じられたとき）にコールバックする
+private final class RecordingStreamDelegate: NSObject, SCStreamDelegate {
+    var onStopped: (@Sendable () -> Void)?
+
+    func stream(_ stream: SCStream, didStopWithError error: Error?) {
+        if let error {
+            recordingLog.info("ストリームが停止しました（ウィンドウ閉鎖などの可能性） error=\(String(describing: error))")
+        } else {
+            recordingLog.info("ストリームが停止しました")
+        }
+        onStopped?()
+    }
+}
+
 /// videoQueue.async の @Sendable クロージャで writer/input/output を渡すためのラッパー（同一キュー内でのみ使用）
 private final class WriterFinishContext: @unchecked Sendable {
     let writer: AVAssetWriter
@@ -315,6 +331,9 @@ final class RecordingService: RecordingServiceProtocol {
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
     private var currentOutputURL: URL?
+    private var streamDelegate: RecordingStreamDelegate?
+    /// ストリームが予期せず停止したときに呼ぶコールバック（録画ファイル URL または Error）
+    private var onStreamStoppedUnexpectedly: (@Sendable (Result<URL, Error>) -> Void)?
     private let videoQueue = DispatchQueue(label: "MeetingScribe.recording.video")
     private var _isRecording = false
 
@@ -322,8 +341,9 @@ final class RecordingService: RecordingServiceProtocol {
         get async { _isRecording }
     }
 
-    func startRecording(displayID: UInt32?, windowID: UInt32?, outputURL: URL) async throws {
+    func startRecording(displayID: UInt32?, windowID: UInt32?, outputURL: URL, onStreamStoppedUnexpectedly: (@Sendable (Result<URL, Error>) -> Void)? = nil) async throws {
         guard !_isRecording else { return }
+        self.onStreamStoppedUnexpectedly = onStreamStoppedUnexpectedly
 
         let content: SCShareableContent
         do {
@@ -421,7 +441,13 @@ final class RecordingService: RecordingServiceProtocol {
             queue: videoQueue
         )
 
-        let scStream = SCStream(filter: filter, configuration: config, delegate: nil)
+        let delegate = RecordingStreamDelegate()
+        delegate.onStopped = { [weak self] in
+            Task { @MainActor in
+                await self?.handleStreamStoppedUnexpectedly()
+            }
+        }
+        let scStream = SCStream(filter: filter, configuration: config, delegate: delegate)
         try scStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: videoQueue)
         try scStream.addStreamOutput(output, type: .audio, sampleHandlerQueue: videoQueue)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
@@ -439,8 +465,83 @@ final class RecordingService: RecordingServiceProtocol {
         assetWriter = writer
         videoInput = input
         audioInput = nil  // 音声入力は output 内で遅延作成され、stop 時に output.audioInput で参照する
+        streamDelegate = delegate
         currentOutputURL = outputURL
         _isRecording = true
+    }
+
+    /// ストリームがシステム側で停止したとき（例: 録画元ウィンドウが閉じられたとき）に呼ばれる。stopCapture は呼ばず Writer 終了のみ行い、コールバックで URL を渡す。
+    private func handleStreamStoppedUnexpectedly() {
+        guard _isRecording else { return }
+        guard let url = currentOutputURL,
+              let output = streamOutput,
+              let writer = assetWriter,
+              let input = videoInput else {
+            _isRecording = false
+            stream = nil
+            streamOutput = nil
+            assetWriter = nil
+            videoInput = nil
+            audioInput = nil
+            streamDelegate = nil
+            currentOutputURL = nil
+            let cb = onStreamStoppedUnexpectedly
+            onStreamStoppedUnexpectedly = nil
+            cb?(.failure(RecordingError.notRecording))
+            return
+        }
+        let callback = onStreamStoppedUnexpectedly
+        _isRecording = false
+        stream = nil
+        streamOutput = nil
+        assetWriter = nil
+        videoInput = nil
+        audioInput = nil
+        streamDelegate = nil
+        currentOutputURL = nil
+        onStreamStoppedUnexpectedly = nil
+
+        recordingLog.info("handleStreamStoppedUnexpectedly: Writer 終了処理へ outputURL=\(url.path)")
+
+        // videoQueue をドレインしてから Writer 終了（stopRecording と同様）
+        videoQueue.async { [videoQueue, callback] in
+            let ctx = WriterFinishContext(writer: writer, input: input, output: output)
+            let (sessionDidStart, endTime) = ctx.output.getSessionEndTime()
+            recordingLog.info("handleStreamStoppedUnexpectedly(videoQueue): sessionDidStart=\(sessionDidStart) endTime=\(endTime.seconds)")
+
+            if !sessionDidStart {
+                recordingLog.warning("handleStreamStoppedUnexpectedly: 1フレームもキャプチャされず")
+                ctx.writer.cancelWriting()
+                try? FileManager.default.removeItem(at: url)
+                DispatchQueue.main.async { callback?(.failure(RecordingError.noFramesCaptured)) }
+                return
+            }
+            if ctx.writer.status != .writing {
+                let err = ctx.writer.error
+                recordingLog.error("handleStreamStoppedUnexpectedly: writer.status が .writing でない status=\(String(describing: ctx.writer.status)) error=\(String(describing: err))")
+                ctx.writer.cancelWriting()
+                let toSend: Result<URL, Error> = if let err {
+                    .failure(RecordingError.writerFailed(err))
+                } else {
+                    .failure(RecordingError.writerFailed(NSError(domain: AVFoundationErrorDomain, code: -11800, userInfo: [NSLocalizedDescriptionKey: "Writer status is not .writing"])))
+                }
+                DispatchQueue.main.async { callback?(toSend) }
+                return
+            }
+            ctx.writer.endSession(atSourceTime: endTime)
+            ctx.input.markAsFinished()
+            ctx.output.audioInput?.markAsFinished()
+            ctx.writer.finishWriting {
+                let status = ctx.writer.status
+                if status == .failed, let error = ctx.writer.error {
+                    recordingLog.error("handleStreamStoppedUnexpectedly: finishWriting 失敗 error=\(String(describing: error))")
+                    DispatchQueue.main.async { callback?(.failure(RecordingError.writerFailed(error))) }
+                } else {
+                    recordingLog.info("handleStreamStoppedUnexpectedly: finishWriting 成功 url=\(url.path)")
+                    DispatchQueue.main.async { callback?(.success(url)) }
+                }
+            }
+        }
     }
 
     func stopRecording() async throws -> URL {
@@ -471,6 +572,8 @@ final class RecordingService: RecordingServiceProtocol {
         assetWriter = nil
         videoInput = nil
         audioInput = nil
+        streamDelegate = nil
+        onStreamStoppedUnexpectedly = nil
         currentOutputURL = nil
 
         do {

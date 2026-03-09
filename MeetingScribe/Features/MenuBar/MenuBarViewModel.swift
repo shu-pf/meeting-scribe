@@ -77,7 +77,16 @@ final class MenuBarViewModel: ObservableObject {
                 let outputDir = settingsDir
                 let name = "recording_\(ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")).mp4"
                 let outputURL = outputDir.appendingPathComponent(name)
-                try await recording.startRecording(displayID: selectedDisplayID, windowID: selectedWindowID, outputURL: outputURL)
+                try await recording.startRecording(
+                    displayID: selectedDisplayID,
+                    windowID: selectedWindowID,
+                    outputURL: outputURL,
+                    onStreamStoppedUnexpectedly: { [weak self] result in
+                        Task { @MainActor in
+                            self?.handleStreamStoppedUnexpectedly(result: result)
+                        }
+                    }
+                )
                 isRecording = true
                 errorMessage = nil
                 pipelineStatus = .idle
@@ -107,6 +116,29 @@ final class MenuBarViewModel: ObservableObject {
                 pipelineStatus = .failed(error.localizedDescription)
             }
             releaseSecurityScopedOutputDirectory()
+        }
+    }
+
+    /// ストリームが予期せず停止したとき（例: 録画元ウィンドウが閉じられたとき）にコールバックから呼ばれる。録画終了と同様にパイプラインを実行する。
+    private func handleStreamStoppedUnexpectedly(result: Result<URL, Error>) {
+        isRecording = false
+        releaseSecurityScopedOutputDirectory()
+        switch result {
+        case .success(let fileURL):
+            errorMessage = nil
+            pipelineStatus = .transcribing
+            Task {
+                do {
+                    try await pipeline.processRecording(fileURL: fileURL)
+                    pipelineStatus = .completed
+                } catch {
+                    pipelineStatus = .failed(error.localizedDescription)
+                    errorMessage = error.localizedDescription
+                }
+            }
+        case .failure(let error):
+            errorMessage = error.localizedDescription
+            pipelineStatus = .failed(error.localizedDescription)
         }
     }
 
