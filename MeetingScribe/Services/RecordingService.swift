@@ -334,7 +334,11 @@ final class RecordingService: RecordingServiceProtocol {
     private var streamDelegate: RecordingStreamDelegate?
     /// ストリームが予期せず停止したときに呼ぶコールバック（録画ファイル URL または Error）
     private var onStreamStoppedUnexpectedly: (@Sendable (Result<URL, Error>) -> Void)?
+    /// ウィンドウ録画時にのみ設定。フォールバックで「ウィンドウがまだ存在するか」をポールするために使用
+    private var recordingWindowID: UInt32?
+    private var windowExistenceCheckTask: Task<Void, Never>?
     private let videoQueue = DispatchQueue(label: "MeetingScribe.recording.video")
+    private let windowCheckInterval: UInt64 = 2  // 秒
     private var _isRecording = false
 
     var isRecording: Bool {
@@ -468,11 +472,54 @@ final class RecordingService: RecordingServiceProtocol {
         streamDelegate = delegate
         currentOutputURL = outputURL
         _isRecording = true
+
+        // ウィンドウ録画時: デリゲートが呼ばれない環境でも検知するため、定期的にウィンドウ存在を確認する
+        if let wid = windowID {
+            recordingWindowID = wid
+            windowExistenceCheckTask = Task { [weak self] in
+                await self?.pollWindowExistence(windowID: wid)
+            }
+        }
+    }
+
+    /// ウィンドウがまだ存在するか定期的に確認し、存在しなければ即時録画終了する（デリゲート未呼び出し時のフォールバック）
+    private func pollWindowExistence(windowID wid: UInt32) async {
+        while !Task.isCancelled && _isRecording {
+            try? await Task.sleep(nanoseconds: windowCheckInterval * 1_000_000_000)
+            guard !Task.isCancelled && _isRecording else { break }
+            let content: SCShareableContent
+            do {
+                content = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<SCShareableContent, Error>) in
+                    SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { c, error in
+                        if let error { cont.resume(throwing: error); return }
+                        guard let c else { cont.resume(throwing: RecordingError.shareableContentUnavailable); return }
+                        cont.resume(returning: c)
+                    }
+                }
+            } catch {
+                recordingLog.debug("pollWindowExistence: コンテンツ取得失敗（次回リトライ） error=\(String(describing: error))")
+                continue
+            }
+            let exists = content.windows.contains { $0.windowID == wid }
+            if !exists {
+                recordingLog.info("録画元ウィンドウが存在しないため録画を終了します windowID=\(wid)")
+                windowExistenceCheckTask?.cancel()
+                windowExistenceCheckTask = nil
+                recordingWindowID = nil
+                await handleStreamStoppedUnexpectedly()
+                return
+            }
+        }
+        windowExistenceCheckTask = nil
+        recordingWindowID = nil
     }
 
     /// ストリームがシステム側で停止したとき（例: 録画元ウィンドウが閉じられたとき）に呼ばれる。stopCapture は呼ばず Writer 終了のみ行い、コールバックで URL を渡す。
     private func handleStreamStoppedUnexpectedly() {
         guard _isRecording else { return }
+        windowExistenceCheckTask?.cancel()
+        windowExistenceCheckTask = nil
+        recordingWindowID = nil
         guard let url = currentOutputURL,
               let output = streamOutput,
               let writer = assetWriter,
@@ -574,6 +621,9 @@ final class RecordingService: RecordingServiceProtocol {
         audioInput = nil
         streamDelegate = nil
         onStreamStoppedUnexpectedly = nil
+        windowExistenceCheckTask?.cancel()
+        windowExistenceCheckTask = nil
+        recordingWindowID = nil
         currentOutputURL = nil
 
         do {
