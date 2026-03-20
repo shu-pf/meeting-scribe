@@ -82,8 +82,9 @@ final class MenuBarViewModel: ObservableObject {
                     windowID: selectedWindowID,
                     outputURL: outputURL,
                     onStreamStoppedUnexpectedly: { [weak self] result in
+                        guard let self else { return }
                         Task { @MainActor in
-                            self?.handleStreamStoppedUnexpectedly(result: result)
+                            self.handleStreamStoppedUnexpectedly(result: result)
                         }
                     }
                 )
