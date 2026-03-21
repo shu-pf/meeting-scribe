@@ -107,6 +107,9 @@ struct SettingsView: View {
                 LabeledContent("リポジトリ") {
                     Link("GitHub", destination: URL(string: "https://github.com/shu-pf/meeting-scribe")!)
                 }
+                Text("会議の録画・文字起こし・要約をワンクリックで。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
