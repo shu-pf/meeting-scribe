@@ -97,6 +97,11 @@ struct SettingsView: View {
                 }
                 .disabled(!checkForUpdatesViewModel.canCheckForUpdates)
             }
+            Section("バージョン情報") {
+                LabeledContent("バージョン") {
+                    Text(appVersion)
+                }
+            }
         }
         .formStyle(.grouped)
         .frame(minWidth: 400, minHeight: 440)
@@ -129,6 +134,12 @@ struct SettingsView: View {
                 downloader: whisperDownloader
             )
         }
+    }
+
+    private var appVersion: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "-"
+        return "\(version) (\(build))"
     }
 
     private func openOutputFolderPicker() {
