@@ -4,6 +4,15 @@
         <title>MeetingScribe</title>
         <item>
             <title>1.2.0</title>
+            <pubDate>Sat, 21 Mar 2026 15:58:31 +0900</pubDate>
+            <sparkle:version>70</sparkle:version>
+            <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.2.0/MeetingScribe.dmg" length="4304785" type="application/octet-stream" sparkle:edSignature="Nae9XD/b1f0vsjGAvElBLxK+9WxqBDJ/Bc1uXn1d00mD5oQm+T8YBkfma96SxittGswIy3Q+mZIzzrkm1/G4DA=="/>
+        </item>
+        <item>
+            <title>1.2.0</title>
             <pubDate>Sat, 21 Mar 2026 15:39:23 +0900</pubDate>
             <sparkle:version>68</sparkle:version>
             <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
@@ -19,15 +28,6 @@
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.1.0/MeetingScribe.dmg" length="4304689" type="application/octet-stream" sparkle:edSignature="IZK2Vaah3Vcs52EK8StwCJ6Jd9B86sEW2ID8af6lx8nc7Xt5henlqa+3xJnL0IPreVGxQtJPWVcm6uxfgNZJCw=="/>
-        </item>
-        <item>
-            <title>v1.1.0</title>
-            <pubDate>Sat, 21 Mar 2026 14:59:50 +0900</pubDate>
-            <sparkle:version>62</sparkle:version>
-            <sparkle:shortVersionString>v1.1.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/vv1.1.0/MeetingScribe.dmg" length="4304610" type="application/octet-stream" sparkle:edSignature="17br6xqLChccXzsEgNS51d3r8zlw1z0V5KAjdn8EY3yjCfOV0rJdd5LVDHPaVUplBaLDCZ5qDK14IzNNcw1oDw=="/>
         </item>
     </channel>
 </rss>
