@@ -9,7 +9,7 @@
             <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.1.0/MeetingScribe.dmg" length="4303577" type="application/octet-stream" sparkle:edSignature="lTDAJ1NvTWyY3ruIL3e1Z4COGimQ+wBy7T14nb8buV7Ykm9kxDnmMEhD1AbshA5ZpnLu3SvQg0f5QVcodEqcCw=="/>
+            <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.1.0/MeetingScribe.dmg" length="4304689" type="application/octet-stream" sparkle:edSignature="IZK2Vaah3Vcs52EK8StwCJ6Jd9B86sEW2ID8af6lx8nc7Xt5henlqa+3xJnL0IPreVGxQtJPWVcm6uxfgNZJCw=="/>
         </item>
         <item>
             <title>v1.1.0</title>
