@@ -1,2 +1,5 @@
 .env
 dist/
+
+# Xcode ユーザー固有（スキーム管理など）。共有は xcshareddata のみ。
+**/xcuserdata/
