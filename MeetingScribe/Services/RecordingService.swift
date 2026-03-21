@@ -299,12 +299,8 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
 private final class RecordingStreamDelegate: NSObject, SCStreamDelegate {
     var onStopped: (@Sendable () -> Void)?
 
-    func stream(_ stream: SCStream, didStopWithError error: Error?) {
-        if let error {
-            recordingLog.info("ストリームが停止しました（ウィンドウ閉鎖などの可能性） error=\(String(describing: error))")
-        } else {
-            recordingLog.info("ストリームが停止しました")
-        }
+    func stream(_ stream: SCStream, didStopWithError error: any Error) {
+        recordingLog.info("ストリームが停止しました（ウィンドウ閉鎖などの可能性） error=\(String(describing: error))")
         onStopped?()
     }
 }
@@ -447,8 +443,8 @@ final class RecordingService: RecordingServiceProtocol {
 
         let delegate = RecordingStreamDelegate()
         delegate.onStopped = { [weak self] in
-            Task { @MainActor in
-                await self?.handleStreamStoppedUnexpectedly()
+            Task { @MainActor [weak self] in
+                self?.handleStreamStoppedUnexpectedly()
             }
         }
         let scStream = SCStream(filter: filter, configuration: config, delegate: delegate)
@@ -506,7 +502,7 @@ final class RecordingService: RecordingServiceProtocol {
                 windowExistenceCheckTask?.cancel()
                 windowExistenceCheckTask = nil
                 recordingWindowID = nil
-                await handleStreamStoppedUnexpectedly()
+                handleStreamStoppedUnexpectedly()
                 return
             }
         }
@@ -551,8 +547,8 @@ final class RecordingService: RecordingServiceProtocol {
         recordingLog.info("handleStreamStoppedUnexpectedly: Writer 終了処理へ outputURL=\(url.path)")
 
         // videoQueue をドレインしてから Writer 終了（stopRecording と同様）
-        videoQueue.async { [videoQueue, callback] in
-            let ctx = WriterFinishContext(writer: writer, input: input, output: output)
+        let ctx = WriterFinishContext(writer: writer, input: input, output: output)
+        videoQueue.async { [ctx, callback] in
             let (sessionDidStart, endTime) = ctx.output.getSessionEndTime()
             recordingLog.info("handleStreamStoppedUnexpectedly(videoQueue): sessionDidStart=\(sessionDidStart) endTime=\(endTime.seconds)")
 
