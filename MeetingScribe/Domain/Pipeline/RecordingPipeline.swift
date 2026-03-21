@@ -5,8 +5,15 @@
 
 import Foundation
 
+/// パイプラインの処理結果
+struct PipelineResult: Sendable {
+    /// 会議タイトル（要約がない場合は「無題」）
+    let meetingTitle: String
+}
+
 protocol RecordingPipelineProtocol: Sendable {
-    func processRecording(fileURL: URL) async throws
+    @discardableResult
+    func processRecording(fileURL: URL) async throws -> PipelineResult
 }
 
 final class RecordingPipeline: RecordingPipelineProtocol {
@@ -32,8 +39,11 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         self.settings = settings
     }
 
-    func processRecording(fileURL: URL) async throws {
-        guard let outputDir = await settings.outputDirectoryURL else { return }
+    @discardableResult
+    func processRecording(fileURL: URL) async throws -> PipelineResult {
+        guard let outputDir = await settings.outputDirectoryURL else {
+            return PipelineResult(meetingTitle: "無題")
+        }
         let fileManager = FileManager.default
         let ext = fileURL.pathExtension.isEmpty ? "mp4" : fileURL.pathExtension
 
@@ -90,6 +100,8 @@ final class RecordingPipeline: RecordingPipelineProtocol {
             let markdownSummary = "# 要約\n\n## 会議名\n\(result.title)\n\n\(result.body)"
             try markdownSummary.write(to: summaryURL, atomically: true, encoding: .utf8)
         }
+
+        return PipelineResult(meetingTitle: meetingTitle)
     }
 
     /// ファイル名に使えない文字をアンダースコアに置換し、長さを制限する

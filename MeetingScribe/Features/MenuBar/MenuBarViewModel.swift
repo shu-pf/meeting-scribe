@@ -7,6 +7,7 @@ import Combine
 import Foundation
 import ScreenCaptureKit
 import SwiftUI
+import UserNotifications
 
 /// 録画対象として表示するディスプレイの表示用モデル
 struct DisplayItem: Identifiable {
@@ -106,8 +107,9 @@ final class MenuBarViewModel: ObservableObject {
                 errorMessage = nil
                 pipelineStatus = .transcribing
                 do {
-                    try await pipeline.processRecording(fileURL: fileURL)
+                    let result = try await pipeline.processRecording(fileURL: fileURL)
                     pipelineStatus = .completed
+                    sendCompletionNotification(title: result.meetingTitle)
                 } catch {
                     pipelineStatus = .failed(error.localizedDescription)
                     errorMessage = error.localizedDescription
@@ -130,8 +132,9 @@ final class MenuBarViewModel: ObservableObject {
             pipelineStatus = .transcribing
             Task {
                 do {
-                    try await pipeline.processRecording(fileURL: fileURL)
+                    let result = try await pipeline.processRecording(fileURL: fileURL)
                     pipelineStatus = .completed
+                    sendCompletionNotification(title: result.meetingTitle)
                 } catch {
                     pipelineStatus = .failed(error.localizedDescription)
                     errorMessage = error.localizedDescription
@@ -141,6 +144,25 @@ final class MenuBarViewModel: ObservableObject {
             errorMessage = error.localizedDescription
             pipelineStatus = .failed(error.localizedDescription)
         }
+    }
+
+    /// 通知の送信権限をリクエストする（アプリ起動時に呼ぶ）
+    func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    /// 要約完了時にローカル通知を送信する
+    private func sendCompletionNotification(title: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "会議の要約が完了しました"
+        content.body = title
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 
     private func releaseSecurityScopedOutputDirectory() {

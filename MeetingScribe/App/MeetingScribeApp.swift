@@ -19,6 +19,7 @@ struct MeetingScribeApp: App {
                 .background(FirstLaunchTriggerView())
                 .onAppear {
                     NSApp.setActivationPolicy(.accessory)
+                    menuBarViewModel.requestNotificationPermission()
                 }
         }
         .menuBarExtraStyle(.window)
