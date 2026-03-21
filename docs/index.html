@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meeting Scribe — 会議を、あとから読み返せるように。</title>
+  <link rel="icon" href="extension_icon.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="styles.css?v=1">
+</head>
+
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <div class="hero-glow" aria-hidden="true"></div>
+  <header class="hero">
+    <p class="hero__label">macOS 会議議事録アプリ</p>
+    <h1 class="hero__title">Meeting Scribe</h1>
+    <p class="hero__subtitle">会議の文字起こしと要約を、Mac内のローカルLLMで実現します。</p>
+    <p class="hero__badge">サブスク料金0・ずっと無料で使えます</p>
+    <a class="hero__cta" href="https://github.com/shu-pf/meeting-scribe/releases/latest/download/MeetingScribe.dmg"
+      target="_blank" rel="noopener noreferrer">ダウンロード（.dmg）</a>
+    <p class="hero__note">Appleシリコンのみ対応</p>
+  </header>
+
+  <main>
+    <section class="section features animate-in">
+      <p class="section__label">Features</p>
+      <h2 class="section__title">録画から要約まで、すべて自動</h2>
+      <ul class="features__list">
+        <li class="feature card animate-in" style="--i: 0">
+          <span class="feature__icon" aria-hidden="true">▶</span>
+          <h3 class="feature__title">ワンクリックで録画</h3>
+          <p class="feature__desc">ステータスメニューに常駐。いつでも録画開始・終了がワンクリックで。</p>
+        </li>
+        <li class="feature card animate-in" style="--i: 1">
+          <span class="feature__icon" aria-hidden="true">◇</span>
+          <h3 class="feature__title">自動で文字起こし・要約</h3>
+          <p class="feature__desc">録画終了後、Whisper で自動文字起こしし、ローカル LLM で会議要約まで一気に実行。</p>
+        </li>
+        <li class="feature card animate-in" style="--i: 2">
+          <span class="feature__icon" aria-hidden="true">◆</span>
+          <h3 class="feature__title">すべてローカルで完結</h3>
+          <p class="feature__desc">クラウドへ音声を送らず、文字起こしも要約もローカルで処理。機密性の高い会議にも安心。</p>
+        </li>
+        <li class="feature card animate-in" style="--i: 3">
+          <span class="feature__icon" aria-hidden="true">●</span>
+          <h3 class="feature__title">どんな会議でも</h3>
+          <p class="feature__desc">Teams、Zoom、その他どの会議ツールでも。ウィンドウ単位または画面全体の録画に対応。</p>
+        </li>
+      </ul>
+    </section>
+
+    <section class="section difference animate-in">
+      <p class="section__label">既存ツールとの違い</p>
+      <h2 class="section__title">セキュリティが厳しい環境でも、料金を気にせず使える</h2>
+      <div class="difference__box">
+        <div class="difference__item">
+          <h3 class="difference__item-title">ローカルで完結するから、厳しい会社でも使える</h3>
+          <p class="difference__item-desc">既存の文字起こしサービスでは、会議に bot
+            や参加者を追加し、その接続先のクラウドで文字起こしするのが一般的です。そのため、音声が社外に送られることを許可できないセキュリティポリシーの厳しい会社では、導入が難しいケースがあります。Meeting Scribe
+            は録画・文字起こし・要約まで<strong>すべてお使いの Mac 内で完結</strong>するため、音声をクラウドに送らずに利用できます。</p>
+        </div>
+        <div class="difference__item">
+          <h3 class="difference__item-title">サブスク料金がかからない</h3>
+          <p class="difference__item-desc">既存の会議議事録・文字起こしサービスは、月額や年額のサブスクリプション料金がかかることがほとんどです。Meeting Scribe
+            は<strong>サブスク料金0</strong>。追加費用なしで、ずっと無料でお使いいただけます。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section demo animate-in">
+      <p class="section__label">Demo</p>
+      <h2 class="section__title">デモ動画</h2>
+      <div class="demo__video-wrap">
+        <video class="demo__video" src="demo.mp4" controls playsinline preload="metadata" poster="">
+          <p>お使いのブラウザは動画の再生に対応していません。<a href="demo.mp4">demo.mp4</a> をダウンロードしてご覧ください。</p>
+        </video>
+      </div>
+    </section>
+
+    <section class="section how-to animate-in">
+      <p class="section__label">How it works</p>
+      <h2 class="section__title">使い方</h2>
+      <ol class="how-to__steps">
+        <li><span class="step-num">1</span>メニューバーから録画を開始</li>
+        <li><span class="step-num">2</span>会議に参加</li>
+        <li><span class="step-num">3</span>録画を終了</li>
+        <li><span class="step-num">4</span>自動で文字起こし・要約が実行され、指定フォルダに保存</li>
+      </ol>
+    </section>
+
+    <section class="section flow animate-in">
+      <p class="section__label">Flow</p>
+      <h2 class="section__title">処理の流れ</h2>
+      <div class="flow__diagram">
+        <div class="mermaid">
+          flowchart TB
+          A[録画開始]
+          B[録画終了]
+          C[Whisper で文字起こし]
+          D[Ollama で要約]
+          E[フォルダに出力]
+          A --> B --> C --> D --> E
+        </div>
+      </div>
+      <p class="flow__note">録画終了後、文字起こし〜要約までローカルで自動実行されます。</p>
+    </section>
+
+    <section class="section ollama-notice animate-in">
+      <p class="section__label">Before you start</p>
+      <h2 class="section__title">Ollama のインストールが必要です</h2>
+      <div class="ollama-notice__box">
+        <p class="ollama-notice__text">Meeting Scribe の要約機能を使うには、<strong>事前に Ollama をインストール</strong>し、利用する LLM モデル（例:
+          llama3.2 など）をダウンロードしておく必要があります。アプリを利用する前に、下記から Ollama をダウンロード・セットアップしてください。</p>
+        <a class="ollama-notice__cta" href="https://ollama.com/download" target="_blank"
+          rel="noopener noreferrer">Ollama をダウンロード</a>
+      </div>
+    </section>
+
+    <section class="section requirements animate-in">
+      <p class="section__label">Requirements</p>
+      <h2 class="section__title">システム要件</h2>
+      <ul class="requirements__list">
+        <li>macOS 15.0 以上</li>
+        <li>要約機能利用時は Ollama 等のローカル LLM を別途インストール</li>
+      </ul>
+    </section>
+
+    <section class="section cta">
+      <a class="cta__button" href="https://github.com/shu-pf/meeting-scribe/releases/latest/download/MeetingScribe.dmg"
+        target="_blank" rel="noopener noreferrer">Meeting Scribe をダウンロード（.dmg）</a>
+      <p class="cta__note">Appleシリコンのみ対応</p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p class="footer__copy">Meeting Scribe — 会議議事録をローカルで。</p>
+  </footer>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'base',
+      themeVariables: {
+        primaryColor: 'rgba(0, 212, 170, 0.15)',
+        primaryTextColor: '#f2f2f7',
+        primaryBorderColor: '#00d4aa',
+        secondaryColor: '#0e0e14',
+        tertiaryColor: 'rgba(22, 22, 28, 0.8)',
+        background: '#08080c',
+        mainBkg: 'rgba(22, 22, 28, 0.9)',
+        secondBkg: '#16161e',
+        border1: 'rgba(0, 212, 170, 0.4)',
+        border2: 'rgba(0, 212, 170, 0.2)',
+        lineColor: 'rgba(0, 212, 170, 0.5)',
+        textColor: '#f2f2f7',
+        fontSize: '15px',
+        fontFamily: '"Outfit", "Noto Sans JP", sans-serif'
+      },
+      flowchart: {
+        useMaxWidth: true,
+        htmlLabels: true,
+        curve: 'basis',
+        padding: 20,
+        nodeSpacing: 50,
+        rankSpacing: 40
+      }
+    });
+  </script>
+</body>
+
+</html>

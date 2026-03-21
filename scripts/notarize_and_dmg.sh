@@ -13,6 +13,7 @@
 #   APP_VERSION … 例 1.2.0。指定時、dist の .app の版情報を署名前に上書きし、
 #                 appcast 用 URL は GitHub Releases（shu-pf/meeting-scribe）向けに自動設定する
 #   DOWNLOAD_URL_PREFIX … appcast 用 URL を手で上書きしたいときのみ
+#   appcast の出力先は docs/appcast.xml のみ（dist には残さない）
 #
 # セットアップ:
 #   cp .env.example .env   # 編集して値を入れる
@@ -44,6 +45,7 @@ APP_NAME="MeetingScribe"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
 STAGING_APP="$DIST_DIR/$APP_NAME.app"
 DMG_PATH="$DIST_DIR/${APP_NAME}.dmg"
+DOCS_APPCAST="$REPO_ROOT/docs/appcast.xml"
 
 # Sparkle ツールのディレクトリ（自動検出 or 環境変数）
 if [[ -z "$SPARKLE_BIN_DIR" ]]; then
@@ -209,16 +211,23 @@ else
   echo "Install create-dmg (e.g. brew install create-dmg) to build a DMG in $DIST_DIR."
 fi
 
-# 9. appcast.xml の生成（Sparkle）
+# 9. appcast.xml → docs/ のみ（Sparkle はアーカイブディレクトリ内の既存 appcast をマージするため、一時的に dist に置く）
 GENERATE_APPCAST="${SPARKLE_BIN_DIR}/generate_appcast"
 if [[ -x "$GENERATE_APPCAST" ]]; then
-  echo "[9] Generating appcast.xml..."
-  APPCAST_ARGS=("$DIST_DIR")
+  echo "[9] Generating docs/appcast.xml..."
+  APPCAST_ARGS=(-o "$DOCS_APPCAST" "$DIST_DIR")
   if [[ -n "$DOWNLOAD_URL_PREFIX" ]]; then
     APPCAST_ARGS=(--download-url-prefix "$DOWNLOAD_URL_PREFIX" "${APPCAST_ARGS[@]}")
   fi
-  "$GENERATE_APPCAST" "${APPCAST_ARGS[@]}"
-  echo "  appcast.xml: $DIST_DIR/appcast.xml"
+  if [[ -f "$DOCS_APPCAST" ]]; then
+    cp "$DOCS_APPCAST" "$DIST_DIR/appcast.xml"
+  fi
+  if ! "$GENERATE_APPCAST" "${APPCAST_ARGS[@]}"; then
+    rm -f "$DIST_DIR/appcast.xml"
+    exit 1
+  fi
+  rm -f "$DIST_DIR/appcast.xml"
+  echo "  $DOCS_APPCAST"
 else
   echo "generate_appcast not found. Skipping appcast generation."
   echo "Set SPARKLE_BIN_DIR or ensure Sparkle SPM package is resolved in Xcode."
@@ -228,4 +237,4 @@ echo ""
 echo "Done."
 echo "  App: $STAGING_APP"
 [[ -f "$DMG_PATH" ]] && echo "  DMG: $DMG_PATH"
-[[ -f "$DIST_DIR/appcast.xml" ]] && echo "  Appcast: $DIST_DIR/appcast.xml"
+[[ -f "$DOCS_APPCAST" ]] && echo "  Appcast: $DOCS_APPCAST (git commit → Pages)"

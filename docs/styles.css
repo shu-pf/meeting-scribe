@@ -1,0 +1,604 @@
+/* Meeting Scribe LP — モダン・ダークテーマ */
+
+:root {
+  --bg: #08080c;
+  --bg-elevated: #0e0e14;
+  --surface: rgba(22, 22, 28, 0.6);
+  --surface-solid: #16161e;
+  --surface-hover: rgba(28, 28, 36, 0.8);
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.1);
+  --text: #f2f2f7;
+  --text-muted: #86868f;
+  --accent: #00d4aa;
+  --accent-dim: rgba(0, 212, 170, 0.12);
+  --accent-hover: #00e6b8;
+  --glow: rgba(0, 212, 170, 0.25);
+  --font-display: "Outfit", sans-serif;
+  --font-sans: "Noto Sans JP", "Hiragino Kaku Gothic ProN", sans-serif;
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-2xl: 3rem;
+  --space-3xl: 4rem;
+  --space-4xl: 6rem;
+  --radius: 14px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --shadow-glow: 0 0 60px var(--glow);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.65;
+  color: var(--text);
+  background:
+    radial-gradient(ellipse 120% 100% at 50% 50%, transparent 35%, rgba(0, 0, 0, 0.18) 100%),
+    radial-gradient(ellipse 100% 80% at 50% -20%, rgba(0, 212, 170, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse 80% 50% at 80% 50%, rgba(0, 212, 170, 0.03) 0%, transparent 45%),
+    radial-gradient(ellipse 60% 40% at 20% 80%, rgba(0, 212, 170, 0.02) 0%, transparent 40%),
+    linear-gradient(180deg, #0a0a0f 0%, #08080c 40%, #060608 100%);
+  background-color: var(--bg);
+  position: relative;
+  min-height: 100vh;
+}
+
+/* 微細ノイズ（質感） */
+.noise {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.04;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ヒーロー背景グラデーションオーブ（メイン＋サブで奥行き） */
+.hero-glow {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 90% 70% at 50% 10%,
+      rgba(0, 212, 170, 0.14) 0%,
+      rgba(0, 212, 170, 0.05) 35%,
+      transparent 60%),
+    radial-gradient(ellipse 70% 50% at 50% 5%,
+      rgba(0, 212, 170, 0.08) 0%,
+      transparent 45%);
+}
+
+/* ========== Hero ========== */
+.hero {
+  position: relative;
+  z-index: 2;
+  padding: var(--space-4xl) var(--space-lg);
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+
+.hero__label {
+  margin: 0 0 var(--space-md);
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+  opacity: 0.95;
+}
+
+.hero__title {
+  margin: 0 0 var(--space-lg);
+  font-family: var(--font-display);
+  font-size: clamp(2.75rem, 9vw, 4.5rem);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.2;
+  background: linear-gradient(160deg, #fff 0%, rgba(255, 255, 255, 0.75) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hero__subtitle {
+  margin: 0 0 var(--space-md);
+  font-size: 1.0625rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  max-width: 42ch;
+  margin-left: auto;
+  margin-right: auto;
+  line-height: 1.7;
+}
+
+.hero__tagline {
+  margin: 0 0 var(--space-md);
+  font-size: 1.125rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  max-width: 26ch;
+  margin-left: auto;
+  margin-right: auto;
+  line-height: 1.75;
+}
+
+.hero__badge {
+  margin: 0 0 var(--space-2xl);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+}
+
+.hero__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 1rem 1.75rem;
+  font-family: var(--font-display);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--bg);
+  background: var(--accent);
+  border-radius: var(--radius);
+  text-decoration: none;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.2s;
+  box-shadow: 0 4px 20px rgba(0, 212, 170, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.hero__cta:hover {
+  background: var(--accent-hover);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 40px rgba(0, 212, 170, 0.35);
+}
+
+.hero__note {
+  margin: var(--space-sm) 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* ========== セクション共通・アニメーション ========== */
+.section {
+  position: relative;
+  z-index: 0;
+  padding: var(--space-4xl) var(--space-lg);
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.section__label {
+  margin: 0 0 var(--space-sm);
+  font-family: var(--font-display);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  opacity: 0.9;
+}
+
+.section__title {
+  margin: 0 0 var(--space-xl);
+  font-family: var(--font-display);
+  font-size: clamp(1.375rem, 3vw, 1.75rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+
+/* ========== 既存ツールとの違い ========== */
+.difference__box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.difference__item {
+  padding: var(--space-xl);
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 212, 170, 0.2);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 0 0 1px rgba(0, 212, 170, 0.06);
+}
+
+.difference__item-title {
+  margin: 0 0 var(--space-md);
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--accent);
+}
+
+.difference__item-desc {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  color: var(--text-muted);
+}
+
+.difference__item-desc strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ========== Ollama 事前準備 ========== */
+.ollama-notice__box {
+  padding: var(--space-2xl) var(--space-xl);
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 212, 170, 0.25);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 0 0 1px rgba(0, 212, 170, 0.08);
+}
+
+.ollama-notice__text {
+  margin: 0 0 var(--space-xl);
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  color: var(--text-muted);
+}
+
+.ollama-notice__text strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ollama-notice__cta {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.75rem 1.5rem;
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--bg);
+  background: var(--accent);
+  border-radius: var(--radius);
+  text-decoration: none;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.2s;
+  box-shadow: 0 4px 16px rgba(0, 212, 170, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ollama-notice__cta:hover {
+  background: var(--accent-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(0, 212, 170, 0.35);
+}
+
+/* ========== Demo ========== */
+.demo__video-wrap {
+  position: relative;
+  max-width: 900px;
+  margin: 0 auto;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow), 0 0 0 1px rgba(0, 0, 0, 0.2);
+  background: var(--bg-elevated);
+}
+
+.demo__video {
+  display: block;
+  width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+
+.demo__video-wrap:focus-within {
+  box-shadow: var(--shadow-glow), 0 0 0 1px var(--accent);
+}
+
+/* フェードイン（表示時） */
+.animate-in {
+  animation: fadeInUp 0.7s ease-out backwards;
+}
+
+.section.animate-in {
+  animation-delay: 0.1s;
+}
+
+.feature.card.animate-in {
+  animation-delay: calc(0.2s + var(--i, 0) * 0.08s);
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ========== Features（ベントスタイル・ガラス） ========== */
+.features__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--space-lg);
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 640px) {
+  .features__list {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.feature.card {
+  padding: var(--space-xl) var(--space-xl);
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  transition: border-color 0.25s, background 0.25s, transform 0.25s ease, box-shadow 0.25s;
+}
+
+.feature.card:hover {
+  background: var(--surface-hover);
+  border-color: rgba(0, 212, 170, 0.18);
+  transform: translateY(-4px);
+  box-shadow: 0 20px 40px -20px rgba(0, 0, 0, 0.5);
+}
+
+.feature__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin-bottom: var(--space-lg);
+  font-size: 0.75rem;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-radius: 12px;
+  border: 1px solid rgba(0, 212, 170, 0.2);
+}
+
+.feature__title {
+  margin: 0 0 var(--space-sm);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.feature__desc {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+  line-height: 1.65;
+}
+
+/* ========== How-to ========== */
+.how-to__steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-md);
+}
+
+.how-to__steps li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  padding: var(--space-lg) var(--space-xl);
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.how-to__steps li:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.step-num {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  font-family: var(--font-display);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-radius: 50%;
+  border: 1px solid rgba(0, 212, 170, 0.25);
+}
+
+/* ========== Flow（処理の流れ） ========== */
+.flow__diagram {
+  padding: var(--space-2xl);
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow-x: auto;
+}
+
+.flow__diagram .mermaid {
+  display: flex;
+  justify-content: center;
+  min-height: 200px;
+}
+
+.flow__diagram .mermaid svg {
+  max-width: 100%;
+  height: auto;
+  filter: drop-shadow(0 0 20px rgba(0, 212, 170, 0.08));
+}
+
+/* ノード：角丸・アクセント枠・軽いグロー */
+.flow__diagram .mermaid .node rect,
+.flow__diagram .mermaid .node circle,
+.flow__diagram .mermaid .node polygon,
+.flow__diagram .mermaid .node path {
+  fill: var(--surface-solid) !important;
+  stroke: var(--accent) !important;
+  stroke-width: 2 !important;
+  rx: 12 !important;
+  ry: 12 !important;
+  transition: filter 0.2s ease, stroke 0.2s ease;
+}
+
+.flow__diagram .mermaid .node:hover rect,
+.flow__diagram .mermaid .node:hover circle,
+.flow__diagram .mermaid .node:hover polygon,
+.flow__diagram .mermaid .node:hover path {
+  filter: drop-shadow(0 0 12px rgba(0, 212, 170, 0.25));
+  stroke: var(--accent-hover) !important;
+}
+
+/* ノード内テキスト */
+.flow__diagram .mermaid .nodeLabel,
+.flow__diagram .mermaid .node text,
+.flow__diagram .mermaid span {
+  color: var(--text) !important;
+  font-family: var(--font-display), var(--font-sans) !important;
+  font-weight: 500 !important;
+  font-size: 0.9375rem !important;
+}
+
+/* 矢印・エッジ線 */
+.flow__diagram .mermaid .edgePath path {
+  stroke: rgba(0, 212, 170, 0.6) !important;
+  stroke-width: 2 !important;
+  fill: none !important;
+}
+
+.flow__diagram .mermaid .arrowheadPath {
+  fill: rgba(0, 212, 170, 0.7) !important;
+}
+
+.flow__note {
+  margin: var(--space-lg) 0 0;
+  font-size: 0.9375rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ========== Requirements ========== */
+.requirements__list {
+  margin: 0;
+  padding: var(--space-xl) var(--space-2xl);
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  list-style: none;
+  color: var(--text-muted);
+}
+
+.requirements__list li {
+  position: relative;
+  padding-left: 1.5rem;
+  margin-bottom: var(--space-sm);
+  font-size: 0.9375rem;
+}
+
+.requirements__list li:last-child {
+  margin-bottom: 0;
+}
+
+.requirements__list li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.6em;
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--accent-dim);
+}
+
+/* ========== CTA ========== */
+.cta {
+  text-align: center;
+  padding: var(--space-4xl) var(--space-lg);
+}
+
+.cta__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem 2rem;
+  font-family: var(--font-display);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--bg);
+  background: var(--accent);
+  border-radius: var(--radius);
+  text-decoration: none;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.2s;
+  box-shadow: 0 4px 20px rgba(0, 212, 170, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.cta__button:hover {
+  background: var(--accent-hover);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 40px rgba(0, 212, 170, 0.35);
+}
+
+.cta__note {
+  margin: var(--space-sm) 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* ========== Footer ========== */
+.footer {
+  position: relative;
+  z-index: 0;
+  padding: var(--space-xl) var(--space-lg);
+  text-align: center;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.footer__copy {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}

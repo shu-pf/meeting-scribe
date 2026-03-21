@@ -1,0 +1,33 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>MeetingScribe</title>
+        <item>
+            <title>1.1.0</title>
+            <pubDate>Sat, 21 Mar 2026 15:02:56 +0900</pubDate>
+            <sparkle:version>63</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.1.0/MeetingScribe.dmg" length="4303577" type="application/octet-stream" sparkle:edSignature="lTDAJ1NvTWyY3ruIL3e1Z4COGimQ+wBy7T14nb8buV7Ykm9kxDnmMEhD1AbshA5ZpnLu3SvQg0f5QVcodEqcCw=="/>
+        </item>
+        <item>
+            <title>v1.1.0</title>
+            <pubDate>Sat, 21 Mar 2026 14:59:50 +0900</pubDate>
+            <sparkle:version>62</sparkle:version>
+            <sparkle:shortVersionString>v1.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/vv1.1.0/MeetingScribe.dmg" length="4304610" type="application/octet-stream" sparkle:edSignature="17br6xqLChccXzsEgNS51d3r8zlw1z0V5KAjdn8EY3yjCfOV0rJdd5LVDHPaVUplBaLDCZ5qDK14IzNNcw1oDw=="/>
+        </item>
+        <item>
+            <title>1.0</title>
+            <pubDate>Sat, 21 Mar 2026 14:28:47 +0900</pubDate>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.1.0/MeetingScribe.dmg" length="4304456" type="application/octet-stream" sparkle:edSignature="Hu86IDpD2qzKeYeW4UAItwfx2UTB14vepuSUfRlvkdkIwOeIlMIVnZEUAnCnJRkqPIYfAV40W8GwhAHC9oX6Cw=="/>
+        </item>
+    </channel>
+</rss>
