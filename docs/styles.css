@@ -82,6 +82,44 @@ body {
       transparent 45%);
 }
 
+/* ========== Top Navigation ========== */
+.top-nav {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-md) var(--space-lg);
+}
+
+.top-nav__github {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+
+.top-nav__github:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.top-nav__icon {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
 /* ========== Hero ========== */
 .hero {
   position: relative;
