@@ -1,5 +1,8 @@
 .env
 dist/
 
+# whisper.cpp は scripts/build_whisper.sh が clone する（サブモジュールにしない）
+whisper.cpp/
+
 # Xcode ユーザー固有（スキーム管理など）。共有は xcshareddata のみ。
 **/xcuserdata/
