@@ -26,6 +26,8 @@ struct SettingsView: View {
         ContextLengthPreset(label: "256K", value: 262_144)
     ]
 
+    @EnvironmentObject private var checkForUpdatesViewModel: CheckForUpdatesViewModel
+
     @StateObject private var viewModel = SettingsViewModel(
         whisperModelStore: WhisperModelStore.shared,
         summaryService: SummaryService()
@@ -87,6 +89,13 @@ struct SettingsView: View {
                     get: { viewModel.launchAtLogin },
                     set: { new in Task { await viewModel.setLaunchAtLogin(new) } }
                 ))
+            }
+            Section("アップデート") {
+                Toggle("自動的にアップデートを確認", isOn: $checkForUpdatesViewModel.automaticallyChecksForUpdates)
+                Button("アップデートを確認…") {
+                    checkForUpdatesViewModel.checkForUpdates()
+                }
+                .disabled(!checkForUpdatesViewModel.canCheckForUpdates)
             }
         }
         .formStyle(.grouped)

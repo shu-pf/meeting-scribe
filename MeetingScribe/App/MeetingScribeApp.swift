@@ -6,10 +6,25 @@
 //
 
 import SwiftUI
+import Sparkle
 
 @main
 struct MeetingScribeApp: App {
+    private let updaterController: SPUStandardUpdaterController
+    @StateObject private var checkForUpdatesViewModel: CheckForUpdatesViewModel
     @StateObject private var menuBarViewModel = MenuBarViewModel()
+
+    init() {
+        let controller = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+        self.updaterController = controller
+        self._checkForUpdatesViewModel = StateObject(
+            wrappedValue: CheckForUpdatesViewModel(updater: controller.updater)
+        )
+    }
 
     var body: some Scene {
         MenuBarExtra {
@@ -26,6 +41,7 @@ struct MeetingScribeApp: App {
 
         WindowGroup(id: "settings", for: String.self) { _ in
             ContentView()
+                .environmentObject(checkForUpdatesViewModel)
         }
         .windowStyle(.automatic)
         .defaultSize(width: 480, height: 540)

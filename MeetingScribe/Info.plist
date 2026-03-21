@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>SUPublicEDKey</key>
+	<string>T1RSycJzs9fRUNc54KhJ89p3XEazJ0jQGS8ah3wUckQ=</string>
+	<key>SUFeedURL</key>
+	<string>https://shu-pf.github.io/meeting-scribe-lp/appcast.xml</string>
+</dict>
+</plist>

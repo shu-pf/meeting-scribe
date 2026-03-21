@@ -6,13 +6,30 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		B03D86112F6E5D6000F51F43 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = B03D86102F6E5D6000F51F43 /* Sparkle */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		B01944E52F5C4E3C00EB5447 /* MeetingScribe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MeetingScribe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B03D86152F6E5F3900F51F43 /* Exceptions for "MeetingScribe" folder in "MeetingScribe" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = B01944E42F5C4E3C00EB5447 /* MeetingScribe */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		B01944E72F5C4E3C00EB5447 /* MeetingScribe */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B03D86152F6E5F3900F51F43 /* Exceptions for "MeetingScribe" folder in "MeetingScribe" target */,
+			);
 			path = MeetingScribe;
 			sourceTree = "<group>";
 		};
@@ -23,6 +40,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B03D86112F6E5D6000F51F43 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -66,6 +84,7 @@
 			);
 			name = MeetingScribe;
 			packageProductDependencies = (
+				B03D86102F6E5D6000F51F43 /* Sparkle */,
 			);
 			productName = MeetingScribe;
 			productReference = B01944E52F5C4E3C00EB5447 /* MeetingScribe.app */;
@@ -95,6 +114,9 @@
 			);
 			mainGroup = B01944DC2F5C4E3C00EB5447;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B03D860F2F6E5D6000F51F43 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B01944E62F5C4E3C00EB5447 /* Products */;
 			projectDirPath = "";
@@ -287,6 +309,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MeetingScribe/Info.plist;
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "会議の画面と音声を録画するために、画面のキャプチャを行います。";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -340,6 +363,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MeetingScribe/Info.plist;
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "会議の画面と音声を録画するために、画面のキャプチャを行います。";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -401,6 +425,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B03D860F2F6E5D6000F51F43 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B03D86102F6E5D6000F51F43 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B03D860F2F6E5D6000F51F43 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = B01944DD2F5C4E3C00EB5447 /* Project object */;
 }

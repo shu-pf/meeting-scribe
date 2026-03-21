@@ -9,7 +9,10 @@
 #   NOTARY_IDENTITY    … "Developer ID Application: Your Name (TEAM_ID)"
 #
 # 任意の環境変数:
-#   DIST_DIR  … 署名・公証後の .app / .dmg を置くディレクトリ（既定: リポジトリの dist/）
+#   DIST_DIR              … 署名・公証後の .app / .dmg を置くディレクトリ（既定: リポジトリの dist/）
+#   SPARKLE_BIN_DIR       … Sparkle ツール（generate_appcast 等）のディレクトリ（既定: 自動検出）
+#   DOWNLOAD_URL_PREFIX   … appcast 内のダウンロード URL プレフィックス
+#                           （例: https://github.com/shu-pf/meeting-scribe/releases/download/v1.0.0/）
 #
 # セットアップ:
 #   cp .env.example .env   # 編集して値を入れる
@@ -36,6 +39,11 @@ APP_NAME="MeetingScribe"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
 STAGING_APP="$DIST_DIR/$APP_NAME.app"
 DMG_PATH="$DIST_DIR/${APP_NAME}.dmg"
+
+# Sparkle ツールのディレクトリ（自動検出 or 環境変数）
+if [[ -z "$SPARKLE_BIN_DIR" ]]; then
+  SPARKLE_BIN_DIR="$(find "$HOME/Library/Developer/Xcode/DerivedData" -path "*/artifacts/sparkle/Sparkle/bin" -type d 2>/dev/null | head -1)"
+fi
 
 # notarytool は Rejected でも終了コード 0 になることがあるため、出力で Accepted を確認する。
 submit_notary_and_require_accept() {
@@ -98,18 +106,42 @@ rm -rf "$STAGING_APP"
 ditto --norsrc "$RELEASE_APP" "$STAGING_APP"
 xattr -cr "$STAGING_APP"
 
-# 2. すべての dylib と whisper、.app を hardened runtime で署名（.app への --deep は使わない）
-echo "[2] Signing all dylibs, whisper, and app..."
+# 2. すべてのバイナリを hardened runtime で署名（内側から外側の順に署名する）
+echo "[2] Signing all binaries..."
+
+# 2a. Resources 内の dylib と whisper
 for f in "$STAGING_APP/Contents/Resources/"*.dylib; do
   [[ -e "$f" ]] || continue
   codesign --force --options runtime --sign "$NOTARY_IDENTITY" "$f"
 done
 codesign --force --options runtime --sign "$NOTARY_IDENTITY" "$STAGING_APP/Contents/Resources/whisper"
+
+# 2b. Sparkle フレームワーク内のバイナリ（XPC Services → Updater.app → Autoupdate → フレームワーク本体の順）
+SPARKLE_FW="$STAGING_APP/Contents/Frameworks/Sparkle.framework"
+if [[ -d "$SPARKLE_FW" ]]; then
+  echo "  Signing Sparkle framework binaries..."
+  # XPC Services
+  for xpc in "$SPARKLE_FW/Versions/B/XPCServices/"*.xpc; do
+    [[ -d "$xpc" ]] || continue
+    codesign --force --options runtime --sign "$NOTARY_IDENTITY" "$xpc"
+  done
+  # Updater.app
+  if [[ -d "$SPARKLE_FW/Versions/B/Updater.app" ]]; then
+    codesign --force --options runtime --sign "$NOTARY_IDENTITY" "$SPARKLE_FW/Versions/B/Updater.app"
+  fi
+  # Autoupdate
+  if [[ -f "$SPARKLE_FW/Versions/B/Autoupdate" ]]; then
+    codesign --force --options runtime --sign "$NOTARY_IDENTITY" "$SPARKLE_FW/Versions/B/Autoupdate"
+  fi
+  # Sparkle フレームワーク本体
+  codesign --force --options runtime --sign "$NOTARY_IDENTITY" "$SPARKLE_FW"
+fi
+
+# 2c. アプリ本体（最後に署名）
 codesign --force --options runtime --sign "$NOTARY_IDENTITY" "$STAGING_APP"
 
-echo "[3] Verifying code signature and Gatekeeper assessment..."
+echo "[3] Verifying code signature..."
 codesign --verify --verbose --strict "$STAGING_APP"
-spctl --assess --type execute --verbose "$STAGING_APP"
 
 # 4. 公証用 zip を提出
 echo "[4] Submitting app to Apple for notarization..."
@@ -123,6 +155,9 @@ rm -f "$ZIP_PATH"
 echo "[5] Stapling notarization ticket to app..."
 xcrun stapler staple "$STAGING_APP"
 xcrun stapler validate "$STAGING_APP" || { echo "Staple validation failed."; exit 1; }
+
+echo "[5.1] Verifying Gatekeeper assessment..."
+spctl --assess --type execute --verbose "$STAGING_APP"
 
 # 6. DMG 作成（create-dmg がインストールされている場合）
 echo "[6] Creating DMG..."
@@ -147,11 +182,30 @@ if command -v create-dmg &>/dev/null; then
   xcrun stapler staple "$DMG_PATH"
   xcrun stapler validate "$DMG_PATH" || { echo "DMG staple validation failed."; exit 1; }
 
-  echo "Done."
-  echo "  App: $STAGING_APP"
-  echo "  DMG: $DMG_PATH"
+  echo "DMG created: $DMG_PATH"
 else
   echo "create-dmg not found. Skipping DMG."
   echo "Signed & stapled app: $STAGING_APP"
   echo "Install create-dmg (e.g. brew install create-dmg) to build a DMG in $DIST_DIR."
 fi
+
+# 9. appcast.xml の生成（Sparkle）
+GENERATE_APPCAST="${SPARKLE_BIN_DIR}/generate_appcast"
+if [[ -x "$GENERATE_APPCAST" ]]; then
+  echo "[9] Generating appcast.xml..."
+  APPCAST_ARGS=("$DIST_DIR")
+  if [[ -n "$DOWNLOAD_URL_PREFIX" ]]; then
+    APPCAST_ARGS=(--download-url-prefix "$DOWNLOAD_URL_PREFIX" "${APPCAST_ARGS[@]}")
+  fi
+  "$GENERATE_APPCAST" "${APPCAST_ARGS[@]}"
+  echo "  appcast.xml: $DIST_DIR/appcast.xml"
+else
+  echo "generate_appcast not found. Skipping appcast generation."
+  echo "Set SPARKLE_BIN_DIR or ensure Sparkle SPM package is resolved in Xcode."
+fi
+
+echo ""
+echo "Done."
+echo "  App: $STAGING_APP"
+[[ -f "$DMG_PATH" ]] && echo "  DMG: $DMG_PATH"
+[[ -f "$DIST_DIR/appcast.xml" ]] && echo "  Appcast: $DIST_DIR/appcast.xml"
