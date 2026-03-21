@@ -2,23 +2,33 @@
 # MeetingScribe を署名・公証し、DMG を作成するスクリプト。
 # 事前に Xcode で Release ビルドしておくこと。
 #
-# 必要な環境変数（実行前に export するか .env を source する）:
+# 必要な環境変数（リポジトリ直下の .env に書くか、事前に export）:
 #   NOTARY_APPLE_ID    … Apple ID メール
 #   NOTARY_TEAM_ID     … チーム ID（例: 3R3JQ22JJF）
 #   NOTARY_PASSWORD    … アプリ用パスワード（https://appleid.apple.com で発行）
 #   NOTARY_IDENTITY    … "Developer ID Application: Your Name (TEAM_ID)"
 #
+# セットアップ:
+#   cp .env.example .env   # 編集して値を入れる
+#
 # 使用例:
-#   export NOTARY_APPLE_ID="your@email.com"
-#   export NOTARY_TEAM_ID="3R3JQ22JJF"
-#   export NOTARY_PASSWORD="xxxx-xxxx-xxxx-xxxx"
-#   export NOTARY_IDENTITY="Developer ID Application: Shugo Furuse (3R3JQ22JJF)"
 #   ./scripts/notarize_and_dmg.sh
 #
 # または Release .app のパスを指定:
 #   ./scripts/notarize_and_dmg.sh /path/to/MeetingScribe.app
 
 set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="${NOTARY_ENV_FILE:-$REPO_ROOT/.env}"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
 APP_NAME="MeetingScribe"
 WORK_DIR="/tmp"
 STAGING_APP="$WORK_DIR/$APP_NAME.app"
@@ -53,7 +63,7 @@ submit_notary_and_require_accept() {
 # 必須の環境変数
 for var in NOTARY_APPLE_ID NOTARY_TEAM_ID NOTARY_PASSWORD NOTARY_IDENTITY; do
   if [[ -z "${!var}" ]]; then
-    echo "Error: $var is not set. Export it before running this script."
+    echo "Error: $var is not set. Create $REPO_ROOT/.env from .env.example or export it."
     exit 1
   fi
 done
