@@ -8,22 +8,14 @@ Xcode で `MeetingScribe` を開いてビルド。
 
 ## 配布
 
-1. Xcode の General → Identity で **Version** を上げる（例: `1.0.0` → `1.1.0`）
-2. `.env.example` を `.env` にコピーし、必要な値を入れる
-3. `.env` の `DOWNLOAD_URL_PREFIX` をリリースバージョンに合わせて設定する
-   ```
-   DOWNLOAD_URL_PREFIX=https://github.com/shu-pf/meeting-scribe/releases/download/v1.1.0/
-   ```
-4. Xcode でリリース用にビルド
-5. `./scripts/notarize_and_dmg.sh` を実行する
-6. 署名・公証済みの `.app`、`.dmg`、`appcast.xml` が **`dist/`** に出力される
-7. GitHub で同じバージョンタグ（例: `v1.1.0`）の Release を作成し、DMG をアップロード
-8. `appcast.xml` を [meeting-scribe-lp](https://github.com/shu-pf/meeting-scribe-lp) リポジトリにコミット・プッシュ
+1. `.env.example` を `.env` にコピーし、公証用の値と **`APP_VERSION`**（例: `1.2.0`）を書く
+2. Xcode で Release ビルド → `./scripts/notarize_and_dmg.sh`
+3. **`dist/`** に `.app` / `.dmg` / `appcast.xml`
+4. GitHub で `v${APP_VERSION}` の Release を作り DMG を載せる
+5. `appcast.xml` を [meeting-scribe-lp](https://github.com/shu-pf/meeting-scribe-lp) に反映
 
-### 自動アップデート（Sparkle）
+### Sparkle
 
-アプリには [Sparkle](https://sparkle-project.org/) による自動アップデート機能が組み込まれている。
-
-- **appcast.xml の配信先**: `https://shu-pf.github.io/meeting-scribe-lp/appcast.xml`
-- **バイナリの配信先**: GitHub Releases（このリポジトリ）
-- **EdDSA 署名鍵**: Keychain に保存済み（`generate_keys` で生成）。紛失時は鍵のローテーションが必要。
+- **appcast**: `https://shu-pf.github.io/meeting-scribe-lp/appcast.xml`
+- **DMG**: GitHub Releases（タグは `v${APP_VERSION}` と一致させる）
+- EdDSA 鍵は Keychain に保存（紛失時は鍵の再生成が必要）

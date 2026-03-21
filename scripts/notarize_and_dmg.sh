@@ -8,11 +8,11 @@
 #   NOTARY_PASSWORD    … アプリ用パスワード（https://appleid.apple.com で発行）
 #   NOTARY_IDENTITY    … "Developer ID Application: Your Name (TEAM_ID)"
 #
-# 任意の環境変数:
-#   DIST_DIR              … 署名・公証後の .app / .dmg を置くディレクトリ（既定: リポジトリの dist/）
-#   SPARKLE_BIN_DIR       … Sparkle ツール（generate_appcast 等）のディレクトリ（既定: 自動検出）
-#   DOWNLOAD_URL_PREFIX   … appcast 内のダウンロード URL プレフィックス
-#                           （例: https://github.com/shu-pf/meeting-scribe/releases/download/v1.0.0/）
+# 任意:
+#   DIST_DIR, SPARKLE_BIN_DIR
+#   APP_VERSION … 例 1.2.0。指定時、dist の .app の版情報を署名前に上書きし、
+#                 appcast 用 URL は GitHub Releases（shu-pf/meeting-scribe）向けに自動設定する
+#   DOWNLOAD_URL_PREFIX … appcast 用 URL を手で上書きしたいときのみ
 #
 # セットアップ:
 #   cp .env.example .env   # 編集して値を入れる
@@ -33,6 +33,11 @@ if [[ -f "$ENV_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
+fi
+
+# APP_VERSION があるとき、appcast 用（DOWNLOAD_URL_PREFIX 未指定なら GitHub Releases を仮定）
+if [[ -z "${DOWNLOAD_URL_PREFIX:-}" && -n "${APP_VERSION:-}" ]]; then
+  DOWNLOAD_URL_PREFIX="https://github.com/shu-pf/meeting-scribe/releases/download/v${APP_VERSION}/"
 fi
 
 APP_NAME="MeetingScribe"
@@ -98,6 +103,12 @@ mkdir -p "$DIST_DIR"
 echo "Using app:     $RELEASE_APP"
 echo "Identity:      $NOTARY_IDENTITY"
 echo "Output dir:    $DIST_DIR"
+if [[ -n "${APP_VERSION:-}" ]]; then
+  echo "APP_VERSION:   $APP_VERSION (will patch staging Info.plist before signing)"
+fi
+if [[ -n "${DOWNLOAD_URL_PREFIX:-}" ]]; then
+  echo "Download URL:  ${DOWNLOAD_URL_PREFIX}<MeetingScribe.dmg>"
+fi
 echo "---"
 
 # 1. dist にコピーして拡張属性を削除
@@ -105,6 +116,15 @@ echo "[1] Copying app to $DIST_DIR and clearing xattr..."
 rm -rf "$STAGING_APP"
 ditto --norsrc "$RELEASE_APP" "$STAGING_APP"
 xattr -cr "$STAGING_APP"
+
+# 1.5 APP_VERSION を staging の Info.plist に反映（ビルド番号は git のコミット数）
+if [[ -n "${APP_VERSION:-}" ]]; then
+  STAGING_PLIST="$STAGING_APP/Contents/Info.plist"
+  BUILD_NUM="$(git -C "$REPO_ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
+  echo "[1.5] Patching $STAGING_PLIST → CFBundleShortVersionString=$APP_VERSION CFBundleVersion=$BUILD_NUM"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$STAGING_PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUM" "$STAGING_PLIST"
+fi
 
 # 2. すべてのバイナリを hardened runtime で署名（内側から外側の順に署名する）
 echo "[2] Signing all binaries..."
