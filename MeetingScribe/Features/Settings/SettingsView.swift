@@ -101,6 +101,12 @@ struct SettingsView: View {
                 LabeledContent("バージョン") {
                     Text(appVersion)
                 }
+                LabeledContent("作成者") {
+                    Text("Shugo Furuse")
+                }
+                LabeledContent("リポジトリ") {
+                    Link("GitHub", destination: URL(string: "https://github.com/shu-pf/meeting-scribe")!)
+                }
             }
         }
         .formStyle(.grouped)
