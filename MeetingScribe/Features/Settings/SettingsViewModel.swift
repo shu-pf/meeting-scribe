@@ -16,6 +16,15 @@ final class SettingsViewModel: ObservableObject {
     @Published var launchAtLogin: Bool = false
     @Published var whisperModelIDs: [String] = []
     @Published var summaryModelIDs: [String] = []
+
+    /// Picker 用: 現在選択中のモデルがリストに無い場合でも含める
+    var summaryModelPickerIDs: [String] {
+        let selected = selectedSummaryModelID
+        if selected.isEmpty || summaryModelIDs.contains(selected) {
+            return summaryModelIDs
+        }
+        return [selected] + summaryModelIDs
+    }
     @Published var summaryContextLength: Int = 131_072
     @Published var showWhisperModelDownloadSheet: Bool = false
 

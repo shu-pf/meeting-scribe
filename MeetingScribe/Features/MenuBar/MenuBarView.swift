@@ -8,6 +8,7 @@ import SwiftUI
 @MainActor
 struct MenuBarView: View {
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: MenuBarViewModel
 
     var body: some View {
@@ -86,6 +87,7 @@ struct MenuBarView: View {
     }
 
     private func openSettings() {
+        dismiss()
         NSApp.activate(ignoringOtherApps: true)
         openWindow(id: "settings", value: "main")
     }

@@ -69,7 +69,7 @@ struct SettingsView: View {
                     set: { new in Task { await viewModel.setSelectedSummaryModelID(new) } }
                 )) {
                     Text("未選択").tag("")
-                    ForEach(viewModel.summaryModelIDs, id: \.self) { id in
+                    ForEach(viewModel.summaryModelPickerIDs, id: \.self) { id in
                         Text(id).tag(id)
                     }
                 }
