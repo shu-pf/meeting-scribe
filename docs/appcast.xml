@@ -3,13 +3,13 @@
     <channel>
         <title>MeetingScribe</title>
         <item>
-            <title>1.2.0</title>
-            <pubDate>Sat, 21 Mar 2026 15:58:31 +0900</pubDate>
-            <sparkle:version>70</sparkle:version>
-            <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
+            <title>1.3.0</title>
+            <pubDate>Sat, 21 Mar 2026 16:06:49 +0900</pubDate>
+            <sparkle:version>71</sparkle:version>
+            <sparkle:shortVersionString>1.3.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.2.0/MeetingScribe.dmg" length="4304785" type="application/octet-stream" sparkle:edSignature="Nae9XD/b1f0vsjGAvElBLxK+9WxqBDJ/Bc1uXn1d00mD5oQm+T8YBkfma96SxittGswIy3Q+mZIzzrkm1/G4DA=="/>
+            <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.3.0/MeetingScribe.dmg" length="4303677" type="application/octet-stream" sparkle:edSignature="F/3NTOpK7GZzQFDo1QF50KQbGcIKGSUIeUONoi08RVEnRtIICl3MQ+e/wbPas24DMlEjBoxr7TglpXB2xPoKAw=="/>
         </item>
         <item>
             <title>1.2.0</title>
