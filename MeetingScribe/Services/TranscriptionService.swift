@@ -21,7 +21,6 @@ protocol TranscriptionServiceProtocol: Sendable {
 
 final class TranscriptionService: TranscriptionServiceProtocol {
     private let store: WhisperModelStoreProtocol
-    private let processTimeout: TimeInterval = 600
 
     init(store: WhisperModelStoreProtocol = WhisperModelStore.shared) {
         self.store = store
@@ -169,13 +168,7 @@ final class TranscriptionService: TranscriptionServiceProtocol {
                 }
             }
 
-            Task {
-                try? await Task.sleep(nanoseconds: UInt64(processTimeout * 1_000_000_000))
-                if process.isRunning {
-                    process.terminate()
-                }
-                resumeOnce(with: .failure(TranscriptionError.timeout))
-            }
+
         }
         } onCancel: {
             if process.isRunning {
@@ -192,7 +185,6 @@ enum TranscriptionError: LocalizedError {
     case modelNotFound(String)
     case whisperBinaryNotFound
     case outputEncodingFailed
-    case timeout
     case processFailed(exitCode: Int, stderr: String?)
 
     var errorDescription: String? {
@@ -203,8 +195,6 @@ enum TranscriptionError: LocalizedError {
             return "Whisper の実行ファイルが見つかりません。scripts/build_whisper.sh を実行してバイナリを用意してください。"
         case .outputEncodingFailed:
             return "文字起こし結果の取得に失敗しました。"
-        case .timeout:
-            return "文字起こしがタイムアウトしました。"
         case .processFailed(let code, let stderr):
             var msg = "文字起こしに失敗しました（終了コード: \(code)）。"
             if let stderr, !stderr.isEmpty {
