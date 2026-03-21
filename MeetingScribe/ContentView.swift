@@ -15,6 +15,12 @@ struct ContentView: View {
 
     var body: some View {
         SettingsView(triggerWhisperSheetAfterGuidance: $triggerWhisperSheetAfterGuidance)
+            .onAppear {
+                NSApp.setActivationPolicy(.regular)
+            }
+            .onDisappear {
+                NSApp.setActivationPolicy(.accessory)
+            }
             .task {
                 guard await !settings.hasSeenFirstLaunchGuidance else { return }
                 try? await Task.sleep(nanoseconds: 100_000_000)

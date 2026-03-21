@@ -17,6 +17,9 @@ struct MeetingScribeApp: App {
         } label: {
             Image(systemName: "menubar.dock.rectangle")
                 .background(FirstLaunchTriggerView())
+                .onAppear {
+                    NSApp.setActivationPolicy(.accessory)
+                }
         }
         .menuBarExtraStyle(.window)
 
