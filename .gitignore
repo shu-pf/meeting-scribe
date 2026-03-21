@@ -1,29 +1,5 @@
 .env
 dist/
 
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# Xcode（ユーザー固有・一時状態）
+# Xcode ユーザー固有（スキーム管理など）。共有は xcshareddata のみ。
 **/xcuserdata/
-*.xcuserstate
-*.xccheckout
-*.moved-aside
-*.hmap
-*.ipa
-*.dSYM
-*.dSYM.zip
-
-# ビルド成果物（誤ってリポジトリ直下に出した場合）
-DerivedData/
-build/
-
-# Swift Package Manager
-.build/
-.swiftpm/configuration/
-
-# 依存管理を使う場合
-Pods/
-Carthage/Build/
