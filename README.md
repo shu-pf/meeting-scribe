@@ -11,5 +11,4 @@ Xcode で `MeetingScribe` を開いてビルド。
 1. リリース用に Xcode でビルド
 2. `.env.example` を `.env` にコピーし、Apple 公証用の値を入れる。
 3. `./scripts/notarize_and_dmg.sh` を実行する。
-
-署名・公証済みの `.app` と `.dmg`（`create-dmg` がある場合）は **`dist/`** に出力される。別の場所にしたい場合は環境変数 `DIST_DIR` を設定する。
+4. 署名・公証済みの `.app` と `.dmg`（`create-dmg` がある場合）は **`dist/`** に出力される。
