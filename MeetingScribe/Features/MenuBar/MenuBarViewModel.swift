@@ -48,8 +48,10 @@ final class MenuBarViewModel: ObservableObject {
     private let recording: RecordingServiceProtocol
     private let settings: SettingsServiceProtocol
     private let pipeline: RecordingPipelineProtocol
-    /// 録画・パイプラインで使用中のセキュリティスコープ付き出力フォルダ（stop 時に stopAccessingSecurityScopedResource するため保持）
-    private var securityScopedOutputDirectory: URL?
+    /// 録画用のセキュリティスコープ付き出力フォルダ
+    private var recordingSecurityScopedDirectory: URL?
+    /// 実行中のパイプラインタスク数（0 になったら pipelineStatus を更新可能）
+    private var runningPipelineCount = 0
 
     init(
         recording: RecordingServiceProtocol? = nil,
@@ -74,7 +76,7 @@ final class MenuBarViewModel: ObservableObject {
                     return
                 }
                 _ = settingsDir.startAccessingSecurityScopedResource()
-                securityScopedOutputDirectory = settingsDir
+                recordingSecurityScopedDirectory = settingsDir
                 let outputDir = settingsDir
                 let name = "recording_\(ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")).mp4"
                 let outputURL = outputDir.appendingPathComponent(name)
@@ -91,9 +93,8 @@ final class MenuBarViewModel: ObservableObject {
                 )
                 isRecording = true
                 errorMessage = nil
-                pipelineStatus = .idle
             } catch {
-                releaseSecurityScopedOutputDirectory()
+                releaseRecordingSecurityScopedDirectory()
                 errorMessage = error.localizedDescription
             }
         }
@@ -105,41 +106,25 @@ final class MenuBarViewModel: ObservableObject {
                 let fileURL = try await recording.stopRecording()
                 isRecording = false
                 errorMessage = nil
-                pipelineStatus = .transcribing
-                do {
-                    let result = try await pipeline.processRecording(fileURL: fileURL)
-                    pipelineStatus = .completed
-                    sendCompletionNotification(title: result.meetingTitle)
-                } catch {
-                    pipelineStatus = .failed(error.localizedDescription)
-                    errorMessage = error.localizedDescription
-                }
+                // 録画用のセキュリティスコープを解放し、パイプライン専用に新たに取得する
+                releaseRecordingSecurityScopedDirectory()
+                runPipelineInBackground(fileURL: fileURL)
             } catch {
                 errorMessage = error.localizedDescription
                 pipelineStatus = .failed(error.localizedDescription)
+                releaseRecordingSecurityScopedDirectory()
             }
-            releaseSecurityScopedOutputDirectory()
         }
     }
 
     /// ストリームが予期せず停止したとき（例: 録画元ウィンドウが閉じられたとき）にコールバックから呼ばれる。録画終了と同様にパイプラインを実行する。
     private func handleStreamStoppedUnexpectedly(result: Result<URL, Error>) {
         isRecording = false
-        releaseSecurityScopedOutputDirectory()
+        releaseRecordingSecurityScopedDirectory()
         switch result {
         case .success(let fileURL):
             errorMessage = nil
-            pipelineStatus = .transcribing
-            Task {
-                do {
-                    let result = try await pipeline.processRecording(fileURL: fileURL)
-                    pipelineStatus = .completed
-                    sendCompletionNotification(title: result.meetingTitle)
-                } catch {
-                    pipelineStatus = .failed(error.localizedDescription)
-                    errorMessage = error.localizedDescription
-                }
-            }
+            runPipelineInBackground(fileURL: fileURL)
         case .failure(let error):
             errorMessage = error.localizedDescription
             pipelineStatus = .failed(error.localizedDescription)
@@ -165,10 +150,40 @@ final class MenuBarViewModel: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
 
-    private func releaseSecurityScopedOutputDirectory() {
-        if let url = securityScopedOutputDirectory {
+    /// パイプライン処理をバックグラウンドで実行する。新しい録画の開始に影響されない独立した Task として動かす。
+    private func runPipelineInBackground(fileURL: URL) {
+        runningPipelineCount += 1
+        pipelineStatus = .transcribing
+        Task { [pipeline, settings] in
+            // パイプライン専用にセキュリティスコープ付き URL を取得する
+            let scopedDir = await settings.outputDirectoryURL
+            if let dir = scopedDir {
+                _ = dir.startAccessingSecurityScopedResource()
+            }
+            defer {
+                scopedDir?.stopAccessingSecurityScopedResource()
+            }
+            do {
+                let result = try await pipeline.processRecording(fileURL: fileURL)
+                self.runningPipelineCount -= 1
+                if self.runningPipelineCount == 0 {
+                    self.pipelineStatus = .completed
+                }
+                self.sendCompletionNotification(title: result.meetingTitle)
+            } catch {
+                self.runningPipelineCount -= 1
+                if self.runningPipelineCount == 0 {
+                    self.pipelineStatus = .failed(error.localizedDescription)
+                }
+                self.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func releaseRecordingSecurityScopedDirectory() {
+        if let url = recordingSecurityScopedDirectory {
             url.stopAccessingSecurityScopedResource()
-            securityScopedOutputDirectory = nil
+            recordingSecurityScopedDirectory = nil
         }
     }
 
