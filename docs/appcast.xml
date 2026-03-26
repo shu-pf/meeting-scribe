@@ -3,6 +3,15 @@
     <channel>
         <title>MeetingScribe</title>
         <item>
+            <title>1.3.1</title>
+            <pubDate>Thu, 26 Mar 2026 21:39:01 +0900</pubDate>
+            <sparkle:version>81</sparkle:version>
+            <sparkle:shortVersionString>1.3.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.3.1/MeetingScribe.dmg" length="4547855" type="application/octet-stream" sparkle:edSignature="g7wYNrN8kGhrxuKH6fbWLEZYjJ6XJ4ijeTlN+i6bxjfUSm2HISBUhISYv1W3JybINY4LP0rhMs4VzH9CP3msBw=="/>
+        </item>
+        <item>
             <title>1.3.0</title>
             <pubDate>Sat, 21 Mar 2026 16:06:49 +0900</pubDate>
             <sparkle:version>71</sparkle:version>
@@ -19,15 +28,6 @@
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.2.0/MeetingScribe.dmg" length="4304176" type="application/octet-stream" sparkle:edSignature="dCcHemW3YQeYh48A/eYkodB3vui6q36TQDbICDcCxoESkgI6R3jfe14W/MSt46DWtyKWPtY3DhrUTEcjROUyBw=="/>
-        </item>
-        <item>
-            <title>1.1.0</title>
-            <pubDate>Sat, 21 Mar 2026 15:02:56 +0900</pubDate>
-            <sparkle:version>63</sparkle:version>
-            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.1.0/MeetingScribe.dmg" length="4304689" type="application/octet-stream" sparkle:edSignature="IZK2Vaah3Vcs52EK8StwCJ6Jd9B86sEW2ID8af6lx8nc7Xt5henlqa+3xJnL0IPreVGxQtJPWVcm6uxfgNZJCw=="/>
         </item>
     </channel>
 </rss>
