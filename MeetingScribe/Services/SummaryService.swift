@@ -41,6 +41,7 @@ final class SummaryService: SummaryServiceProtocol {
 
         let systemPrompt = """
             以下の会議の文字起こしを要約してください。
+            出力は必ず日本語で作成してください。
             出力形式は必ず次のようにしてください：
             1行目: 会議タイトルだけを1行で書く。
             2行目: 空行。
