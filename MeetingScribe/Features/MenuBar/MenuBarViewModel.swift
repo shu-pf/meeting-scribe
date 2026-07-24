@@ -48,6 +48,7 @@ final class MenuBarViewModel: ObservableObject {
     private let recording: RecordingServiceProtocol
     private let settings: SettingsServiceProtocol
     private let pipeline: RecordingPipelineProtocol
+    private let diagnosticLog = DiagnosticLogger(category: "MenuBar")
     /// 録画用のセキュリティスコープ付き出力フォルダ
     private var recordingSecurityScopedDirectory: URL?
     /// 実行中のパイプラインタスク数（0 になったら pipelineStatus を更新可能）
@@ -69,9 +70,13 @@ final class MenuBarViewModel: ObservableObject {
     }
 
     func startRecording() {
+        diagnosticLog.info(
+            "録画開始操作 displayID=\(String(describing: selectedDisplayID)) windowID=\(String(describing: selectedWindowID))"
+        )
         Task {
             do {
                 guard let settingsDir = await settings.outputDirectoryURL else {
+                    diagnosticLog.error("録画開始失敗: 出力フォルダ未設定")
                     errorMessage = "出力フォルダが未設定です。設定から出力フォルダを選択してください。"
                     return
                 }
@@ -93,14 +98,17 @@ final class MenuBarViewModel: ObservableObject {
                 )
                 isRecording = true
                 errorMessage = nil
+                diagnosticLog.info("録画中状態へ遷移 outputURL=\(outputURL.path)")
             } catch {
                 releaseRecordingSecurityScopedDirectory()
                 errorMessage = error.localizedDescription
+                diagnosticLog.error("録画開始失敗 error=\(Self.describeError(error))")
             }
         }
     }
 
     func stopRecording() {
+        diagnosticLog.info("録画停止操作")
         Task {
             do {
                 let fileURL = try await recording.stopRecording()
@@ -109,10 +117,12 @@ final class MenuBarViewModel: ObservableObject {
                 // 録画用のセキュリティスコープを解放し、パイプライン専用に新たに取得する
                 releaseRecordingSecurityScopedDirectory()
                 runPipelineInBackground(fileURL: fileURL)
+                diagnosticLog.info("録画停止成功 fileURL=\(fileURL.path)")
             } catch {
                 errorMessage = error.localizedDescription
                 pipelineStatus = .failed(error.localizedDescription)
                 releaseRecordingSecurityScopedDirectory()
+                diagnosticLog.error("録画停止失敗 error=\(Self.describeError(error))")
             }
         }
     }
@@ -124,10 +134,14 @@ final class MenuBarViewModel: ObservableObject {
         switch result {
         case .success(let fileURL):
             errorMessage = nil
+            diagnosticLog.warning("録画ストリームが予期せず停止 fileURL=\(fileURL.path)")
             runPipelineInBackground(fileURL: fileURL)
         case .failure(let error):
             errorMessage = error.localizedDescription
             pipelineStatus = .failed(error.localizedDescription)
+            diagnosticLog.error(
+                "録画ストリームの予期しない停止処理に失敗 error=\(Self.describeError(error))"
+            )
         }
     }
 
@@ -154,6 +168,7 @@ final class MenuBarViewModel: ObservableObject {
     private func runPipelineInBackground(fileURL: URL) {
         runningPipelineCount += 1
         pipelineStatus = .transcribing
+        diagnosticLog.info("録画後パイプライン開始 fileURL=\(fileURL.path)")
         Task { [pipeline, settings] in
             // パイプライン専用にセキュリティスコープ付き URL を取得する
             let scopedDir = await settings.outputDirectoryURL
@@ -169,6 +184,9 @@ final class MenuBarViewModel: ObservableObject {
                 if self.runningPipelineCount == 0 {
                     self.pipelineStatus = .completed
                 }
+                self.diagnosticLog.info(
+                    "録画後パイプライン完了 title=\(result.meetingTitle)"
+                )
                 self.sendCompletionNotification(title: result.meetingTitle)
             } catch {
                 self.runningPipelineCount -= 1
@@ -176,6 +194,9 @@ final class MenuBarViewModel: ObservableObject {
                     self.pipelineStatus = .failed(error.localizedDescription)
                 }
                 self.errorMessage = error.localizedDescription
+                self.diagnosticLog.error(
+                    "録画後パイプライン失敗 error=\(Self.describeError(error))"
+                )
             }
         }
     }
@@ -233,8 +254,14 @@ final class MenuBarViewModel: ObservableObject {
                 errorMessage = "録画対象の取得に失敗しました"
                 displayItems = []
                 windowItems = []
+                diagnosticLog.error("録画対象取得失敗 error=\(Self.describeError(error))")
             }
         }
+    }
+
+    private nonisolated static func describeError(_ error: Error) -> String {
+        let nsError = error as NSError
+        return "domain=\(nsError.domain) code=\(nsError.code) description=\(nsError.localizedDescription)"
     }
 }
 

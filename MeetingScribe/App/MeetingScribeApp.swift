@@ -15,6 +15,12 @@ struct MeetingScribeApp: App {
     @StateObject private var menuBarViewModel = MenuBarViewModel()
 
     init() {
+        let appLog = DiagnosticLogger(category: "App")
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "-"
+        appLog.info(
+            "アプリ起動 version=\(version) build=\(build) macOS=\(ProcessInfo.processInfo.operatingSystemVersionString)"
+        )
         let controller = SPUStandardUpdaterController(
             startingUpdater: true,
             updaterDelegate: nil,

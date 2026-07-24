@@ -97,6 +97,23 @@ struct SettingsView: View {
                 }
                 .disabled(!checkForUpdatesViewModel.canCheckForUpdates)
             }
+            Section("診断ログ") {
+                Text("録画や文字起こしが失敗したときの調査情報を、このMac内だけに保存します。会議の内容は記録しません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("ログを開く") {
+                        openDiagnosticLog()
+                    }
+                    Button("Finderで表示") {
+                        revealDiagnosticLog()
+                    }
+                }
+                Text(DiagnosticLogStore.currentLogURL.path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
             Section("バージョン情報") {
                 LabeledContent("バージョン") {
                     Text(appVersion)
@@ -160,6 +177,16 @@ struct SettingsView: View {
             guard response == .OK, let url = panel.url else { return }
             Task { await viewModel.setOutputDirectory(url) }
         }
+    }
+
+    private func openDiagnosticLog() {
+        DiagnosticLogStore.shared.flush()
+        NSWorkspace.shared.open(DiagnosticLogStore.currentLogURL)
+    }
+
+    private func revealDiagnosticLog() {
+        DiagnosticLogStore.shared.flush()
+        NSWorkspace.shared.activateFileViewerSelecting([DiagnosticLogStore.currentLogURL])
     }
 }
 

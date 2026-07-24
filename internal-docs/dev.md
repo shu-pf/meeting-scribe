@@ -1,5 +1,9 @@
 # 開発者向けドキュメント
 
+## 設計資料
+
+- [アプリケーションライフサイクル](./application-lifecycle.md)
+
 ## 開発
 
 Xcode で `MeetingScribe` を開いてビルド。

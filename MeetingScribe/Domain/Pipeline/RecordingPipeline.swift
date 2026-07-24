@@ -17,6 +17,8 @@ protocol RecordingPipelineProtocol: Sendable {
 }
 
 final class RecordingPipeline: RecordingPipelineProtocol {
+    private let diagnosticLog = DiagnosticLogger(category: "Pipeline")
+
     private static let baseNameDateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd_HHmm"
@@ -42,14 +44,18 @@ final class RecordingPipeline: RecordingPipelineProtocol {
     @discardableResult
     func processRecording(fileURL: URL) async throws -> PipelineResult {
         guard let outputDir = await settings.outputDirectoryURL else {
+            diagnosticLog.error("パイプライン中断: 出力フォルダ未設定 fileURL=\(fileURL.path)")
             return PipelineResult(meetingTitle: "無題")
         }
+        diagnosticLog.info("パイプライン処理開始 fileURL=\(fileURL.path)")
         let fileManager = FileManager.default
         let ext = fileURL.pathExtension.isEmpty ? "mp4" : fileURL.pathExtension
 
         // 1. 文字起こし
         let modelID = await settings.selectedWhisperModelID ?? "default"
+        diagnosticLog.info("文字起こし開始 modelID=\(modelID)")
         let transcript = try await transcription.transcribe(audioOrVideoURL: fileURL, modelID: modelID)
+        diagnosticLog.info("文字起こし完了 characterCount=\(transcript.count)")
 
         // 2. 文字起こしをすぐに出力（要約の前。日時のみのファイル名）
         let recordingDate = (try? fileManager.attributesOfItem(atPath: fileURL.path)[.creationDate] as? Date) ?? Date()
@@ -63,11 +69,16 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         var summaryResult: SummarizeResult?
         if let summaryModelID = await settings.selectedSummaryModelID, !summaryModelID.isEmpty {
             let numCtx = await settings.summaryContextLength
+            diagnosticLog.info(
+                "要約開始 modelID=\(summaryModelID) contextLength=\(numCtx)"
+            )
             let result = try await summary.summarize(transcript: transcript, modelID: summaryModelID, numCtx: numCtx)
             summaryResult = result
             meetingTitle = result.title
+            diagnosticLog.info("要約完了")
         } else {
             meetingTitle = "無題"
+            diagnosticLog.info("要約をスキップ: モデル未設定")
         }
 
         // 4. 日時 + 会議名で baseName を生成
@@ -101,6 +112,7 @@ final class RecordingPipeline: RecordingPipelineProtocol {
             try markdownSummary.write(to: summaryURL, atomically: true, encoding: .utf8)
         }
 
+        diagnosticLog.info("パイプライン処理完了 baseName=\(baseName)")
         return PipelineResult(meetingTitle: meetingTitle)
     }
 

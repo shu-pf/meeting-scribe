@@ -8,7 +8,6 @@ import CoreAudio
 import CoreMedia
 import CoreVideo
 import Foundation
-import os
 import ScreenCaptureKit
 
 // MARK: - 音声 AAC 設定（ソースフォーマットから生成して -12780 を防ぐ）
@@ -32,7 +31,7 @@ private func makeAACOutputSettings(from formatDesc: CMFormatDescription) -> [Str
     return settings
 }
 
-private let recordingLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "MeetingScribe", category: "Recording")
+private let recordingLog = DiagnosticLogger(category: "Recording")
 
 protocol RecordingServiceProtocol: Sendable {
     func startRecording(displayID: UInt32?, windowID: UInt32?, outputURL: URL, onStreamStoppedUnexpectedly: (@Sendable (Result<URL, Error>) -> Void)?) async throws
@@ -344,6 +343,9 @@ final class RecordingService: RecordingServiceProtocol {
     func startRecording(displayID: UInt32?, windowID: UInt32?, outputURL: URL, onStreamStoppedUnexpectedly: (@Sendable (Result<URL, Error>) -> Void)? = nil) async throws {
         guard !_isRecording else { return }
         self.onStreamStoppedUnexpectedly = onStreamStoppedUnexpectedly
+        recordingLog.info(
+            "録画開始要求 displayID=\(String(describing: displayID)) windowID=\(String(describing: windowID)) outputURL=\(outputURL.path)"
+        )
 
         let content: SCShareableContent
         do {
@@ -468,6 +470,9 @@ final class RecordingService: RecordingServiceProtocol {
         streamDelegate = delegate
         currentOutputURL = outputURL
         _isRecording = true
+        recordingLog.info(
+            "録画開始成功 mode=\(windowID == nil ? "display" : "window") width=\(width) height=\(height)"
+        )
 
         // ウィンドウ録画時: デリゲートが呼ばれない環境でも検知するため、定期的にウィンドウ存在を確認する
         if let wid = windowID {
@@ -479,6 +484,7 @@ final class RecordingService: RecordingServiceProtocol {
     }
 
     /// ウィンドウがまだ存在するか定期的に確認し、存在しなければ即時録画終了する（デリゲート未呼び出し時のフォールバック）
+    /// 現在の Space に表示されていないウィンドウも「存在する」と判定する必要がある。
     private func pollWindowExistence(windowID wid: UInt32) async {
         while !Task.isCancelled && _isRecording {
             try? await Task.sleep(nanoseconds: windowCheckInterval * 1_000_000_000)
@@ -486,14 +492,14 @@ final class RecordingService: RecordingServiceProtocol {
             let content: SCShareableContent
             do {
                 content = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<SCShareableContent, Error>) in
-                    SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { c, error in
+                    SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { c, error in
                         if let error { cont.resume(throwing: error); return }
                         guard let c else { cont.resume(throwing: RecordingError.shareableContentUnavailable); return }
                         cont.resume(returning: c)
                     }
                 }
             } catch {
-                recordingLog.debug("pollWindowExistence: コンテンツ取得失敗（次回リトライ） error=\(String(describing: error))")
+                recordingLog.warning("pollWindowExistence: コンテンツ取得失敗（次回リトライ） error=\(String(describing: error))")
                 continue
             }
             let exists = content.windows.contains { $0.windowID == wid }

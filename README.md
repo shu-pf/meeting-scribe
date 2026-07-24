@@ -60,4 +60,5 @@ MeetingScribeは、Macのステータスメニューに常駐し、会議の画�
 ## 開発
 
 - [開発者向けドキュメント](./internal-docs/dev.md)
+- [アプリケーションライフサイクル](./internal-docs/application-lifecycle.md)
 - [要件定義](./internal-docs/要件定義.md)
