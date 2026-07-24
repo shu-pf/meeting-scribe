@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "XcodeBuildMCP": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "xcodebuildmcp@latest",
+        "mcp"
+      ],
+      "env": {
+        "DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer",
+        "XCODEBUILDMCP_ENABLED_WORKFLOWS": "macos,ui-automation,debugging,logging"
+      }
+    }
+  }
+}
