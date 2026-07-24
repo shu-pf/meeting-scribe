@@ -11,9 +11,19 @@ struct PipelineResult: Sendable {
     let meetingTitle: String
 }
 
+/// 録画後パイプラインの進捗
+enum PipelineProgress: Sendable {
+    case transcribing
+    case summarizing
+    case saving
+}
+
 protocol RecordingPipelineProtocol: Sendable {
     @discardableResult
-    func processRecording(fileURL: URL) async throws -> PipelineResult
+    func processRecording(
+        fileURL: URL,
+        onProgress: @escaping @Sendable (PipelineProgress) async -> Void
+    ) async throws -> PipelineResult
 }
 
 final class RecordingPipeline: RecordingPipelineProtocol {
@@ -42,7 +52,10 @@ final class RecordingPipeline: RecordingPipelineProtocol {
     }
 
     @discardableResult
-    func processRecording(fileURL: URL) async throws -> PipelineResult {
+    func processRecording(
+        fileURL: URL,
+        onProgress: @escaping @Sendable (PipelineProgress) async -> Void
+    ) async throws -> PipelineResult {
         guard let outputDir = await settings.outputDirectoryURL else {
             diagnosticLog.error("パイプライン中断: 出力フォルダ未設定 fileURL=\(fileURL.path)")
             return PipelineResult(meetingTitle: "無題")
@@ -52,6 +65,7 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         let ext = fileURL.pathExtension.isEmpty ? "mp4" : fileURL.pathExtension
 
         // 1. 文字起こし
+        await onProgress(.transcribing)
         let modelID = await settings.selectedWhisperModelID ?? "default"
         diagnosticLog.info("文字起こし開始 modelID=\(modelID)")
         let transcript = try await transcription.transcribe(audioOrVideoURL: fileURL, modelID: modelID)
@@ -68,6 +82,7 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         let meetingTitle: String
         var summaryResult: SummarizeResult?
         if let summaryModelID = await settings.selectedSummaryModelID, !summaryModelID.isEmpty {
+            await onProgress(.summarizing)
             let numCtx = await settings.summaryContextLength
             diagnosticLog.info(
                 "要約開始 modelID=\(summaryModelID) contextLength=\(numCtx)"
@@ -80,6 +95,8 @@ final class RecordingPipeline: RecordingPipelineProtocol {
             meetingTitle = "無題"
             diagnosticLog.info("要約をスキップ: モデル未設定")
         }
+
+        await onProgress(.saving)
 
         // 4. 日時 + 会議名で baseName を生成
         let sanitizedTitle = Self.sanitizeFileName(meetingTitle)

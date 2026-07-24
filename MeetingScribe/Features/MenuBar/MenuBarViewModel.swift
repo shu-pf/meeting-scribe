@@ -23,13 +23,41 @@ struct WindowItem: Identifiable {
     let label: String
 }
 
-/// 録画終了後のパイプライン（文字起こし・要約）の状態
-enum PipelineStatus: Equatable {
-    case idle
+/// 録画終了後に実行される1件分の処理状態
+enum PipelineJobStatus: Equatable {
+    case waiting
     case transcribing
     case summarizing
-    case completed
+    case saving
+    case completed(String)
     case failed(String)
+
+    var isActive: Bool {
+        switch self {
+        case .waiting, .transcribing, .summarizing, .saving:
+            true
+        case .completed, .failed:
+            false
+        }
+    }
+}
+
+/// メニューバーに表示する録画後処理ジョブ
+struct PipelineJob: Identifiable, Equatable {
+    let id: UUID
+    let createdAt: Date
+    var status: PipelineJobStatus
+}
+
+/// 出力フォルダから復元した録画履歴
+struct RecordingHistoryItem: Identifiable, Equatable {
+    var id: URL { recordingURL }
+
+    let recordingURL: URL
+    let title: String
+    let recordedAt: Date
+    let hasTranscript: Bool
+    let hasSummary: Bool
 }
 
 @MainActor
@@ -41,7 +69,9 @@ final class MenuBarViewModel: ObservableObject {
     @Published var displayItems: [DisplayItem] = []
     @Published var windowItems: [WindowItem] = []
     @Published var isLoadingContent = false
-    @Published var pipelineStatus: PipelineStatus = .idle
+    @Published private(set) var pipelineJobs: [PipelineJob] = []
+    @Published private(set) var recordingHistory: [RecordingHistoryItem] = []
+    @Published private(set) var isLoadingRecordingHistory = false
     /// 出力フォルダが設定済みか（未設定の場合は録画開始不可）
     @Published var isOutputDirectorySet = false
 
@@ -49,10 +79,30 @@ final class MenuBarViewModel: ObservableObject {
     private let settings: SettingsServiceProtocol
     private let pipeline: RecordingPipelineProtocol
     private let diagnosticLog = DiagnosticLogger(category: "MenuBar")
+    private static let historyDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HHmm"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        return formatter
+    }()
+    private static let recordingExtensions: Set<String> = ["mp4", "mov", "m4v"]
     /// 録画用のセキュリティスコープ付き出力フォルダ
     private var recordingSecurityScopedDirectory: URL?
-    /// 実行中のパイプラインタスク数（0 になったら pipelineStatus を更新可能）
-    private var runningPipelineCount = 0
+    var activePipelineJobCount: Int {
+        pipelineJobs.count { job in
+            switch job.status {
+            case .transcribing, .summarizing, .saving:
+                true
+            case .waiting, .completed, .failed:
+                false
+            }
+        }
+    }
+
+    var waitingPipelineJobCount: Int {
+        pipelineJobs.count { $0.status == .waiting }
+    }
 
     init(
         recording: RecordingServiceProtocol? = nil,
@@ -120,7 +170,6 @@ final class MenuBarViewModel: ObservableObject {
                 diagnosticLog.info("録画停止成功 fileURL=\(fileURL.path)")
             } catch {
                 errorMessage = error.localizedDescription
-                pipelineStatus = .failed(error.localizedDescription)
                 releaseRecordingSecurityScopedDirectory()
                 diagnosticLog.error("録画停止失敗 error=\(Self.describeError(error))")
             }
@@ -138,7 +187,6 @@ final class MenuBarViewModel: ObservableObject {
             runPipelineInBackground(fileURL: fileURL)
         case .failure(let error):
             errorMessage = error.localizedDescription
-            pipelineStatus = .failed(error.localizedDescription)
             diagnosticLog.error(
                 "録画ストリームの予期しない停止処理に失敗 error=\(Self.describeError(error))"
             )
@@ -166,8 +214,9 @@ final class MenuBarViewModel: ObservableObject {
 
     /// パイプライン処理をバックグラウンドで実行する。新しい録画の開始に影響されない独立した Task として動かす。
     private func runPipelineInBackground(fileURL: URL) {
-        runningPipelineCount += 1
-        pipelineStatus = .transcribing
+        let job = PipelineJob(id: UUID(), createdAt: Date(), status: .waiting)
+        pipelineJobs.insert(job, at: 0)
+        trimFinishedPipelineJobs()
         diagnosticLog.info("録画後パイプライン開始 fileURL=\(fileURL.path)")
         Task { [pipeline, settings] in
             // パイプライン専用にセキュリティスコープ付き URL を取得する
@@ -179,25 +228,46 @@ final class MenuBarViewModel: ObservableObject {
                 scopedDir?.stopAccessingSecurityScopedResource()
             }
             do {
-                let result = try await pipeline.processRecording(fileURL: fileURL)
-                self.runningPipelineCount -= 1
-                if self.runningPipelineCount == 0 {
-                    self.pipelineStatus = .completed
+                let result = try await pipeline.processRecording(fileURL: fileURL) { [weak self] progress in
+                    await self?.updatePipelineJob(id: job.id, progress: progress)
                 }
+                self.updatePipelineJob(id: job.id, status: .completed(result.meetingTitle))
                 self.diagnosticLog.info(
                     "録画後パイプライン完了 title=\(result.meetingTitle)"
                 )
+                self.loadRecordingHistory()
                 self.sendCompletionNotification(title: result.meetingTitle)
             } catch {
-                self.runningPipelineCount -= 1
-                if self.runningPipelineCount == 0 {
-                    self.pipelineStatus = .failed(error.localizedDescription)
-                }
-                self.errorMessage = error.localizedDescription
+                self.updatePipelineJob(id: job.id, status: .failed(error.localizedDescription))
                 self.diagnosticLog.error(
                     "録画後パイプライン失敗 error=\(Self.describeError(error))"
                 )
             }
+        }
+    }
+
+    private func updatePipelineJob(id: PipelineJob.ID, progress: PipelineProgress) {
+        let status: PipelineJobStatus = switch progress {
+        case .transcribing: .transcribing
+        case .summarizing: .summarizing
+        case .saving: .saving
+        }
+        updatePipelineJob(id: id, status: status)
+    }
+
+    private func updatePipelineJob(id: PipelineJob.ID, status: PipelineJobStatus) {
+        guard let index = pipelineJobs.firstIndex(where: { $0.id == id }) else { return }
+        pipelineJobs[index].status = status
+        trimFinishedPipelineJobs()
+    }
+
+    /// 実行中の項目は残し、完了・失敗した履歴は直近5件まで表示する。
+    private func trimFinishedPipelineJobs() {
+        var finishedCount = 0
+        pipelineJobs.removeAll { job in
+            guard !job.status.isActive else { return false }
+            finishedCount += 1
+            return finishedCount > 5
         }
     }
 
@@ -214,6 +284,7 @@ final class MenuBarViewModel: ObservableObject {
             isLoadingContent = true
             defer { isLoadingContent = false }
             isOutputDirectorySet = await settings.outputDirectoryURL != nil
+            loadRecordingHistory()
             do {
                 let content = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<SCShareableContent, Error>) in
                     SCShareableContent.getExcludingDesktopWindows(
@@ -257,6 +328,85 @@ final class MenuBarViewModel: ObservableObject {
                 diagnosticLog.error("録画対象取得失敗 error=\(Self.describeError(error))")
             }
         }
+    }
+
+    /// 出力フォルダ内の完成済み録画を読み取り、アプリをまたいだ履歴を復元する。
+    func loadRecordingHistory() {
+        Task {
+            guard let outputDirectory = await settings.outputDirectoryURL else {
+                recordingHistory = []
+                return
+            }
+
+            isLoadingRecordingHistory = true
+            defer { isLoadingRecordingHistory = false }
+
+            let isAccessing = outputDirectory.startAccessingSecurityScopedResource()
+            defer {
+                if isAccessing {
+                    outputDirectory.stopAccessingSecurityScopedResource()
+                }
+            }
+
+            do {
+                let fileURLs = try FileManager.default.contentsOfDirectory(
+                    at: outputDirectory,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                )
+                let fileURLSet = Set(fileURLs.map(\.standardizedFileURL))
+                recordingHistory = fileURLs.compactMap { fileURL in
+                    makeRecordingHistoryItem(fileURL: fileURL, allFileURLs: fileURLSet)
+                }
+                .sorted { $0.recordedAt > $1.recordedAt }
+                diagnosticLog.info("録画履歴を更新 count=\(recordingHistory.count)")
+            } catch {
+                recordingHistory = []
+                diagnosticLog.error("録画履歴の取得に失敗 error=\(Self.describeError(error))")
+            }
+        }
+    }
+
+    func revealRecordingInFinder(_ item: RecordingHistoryItem) {
+        NSWorkspace.shared.activateFileViewerSelecting([item.recordingURL])
+    }
+
+    private func makeRecordingHistoryItem(
+        fileURL: URL,
+        allFileURLs: Set<URL>
+    ) -> RecordingHistoryItem? {
+        guard Self.recordingExtensions.contains(fileURL.pathExtension.lowercased()) else {
+            return nil
+        }
+
+        let baseName = fileURL.deletingPathExtension().lastPathComponent
+        guard baseName.count > 16 else { return nil }
+
+        let dateText = String(baseName.prefix(15))
+        guard let recordedAt = Self.historyDateFormatter.date(from: dateText) else {
+            // `recording_...` の一時ファイルは完成済み履歴には含めない。
+            return nil
+        }
+
+        let titleStart = baseName.index(baseName.startIndex, offsetBy: 16)
+        let title = String(baseName[titleStart...]).replacingOccurrences(of: "_", with: " ")
+        let directory = fileURL.deletingLastPathComponent()
+        let transcriptURL = directory
+            .appendingPathComponent("\(baseName)_transcript")
+            .appendingPathExtension("md")
+            .standardizedFileURL
+        let summaryURL = directory
+            .appendingPathComponent("\(baseName)_summary")
+            .appendingPathExtension("md")
+            .standardizedFileURL
+
+        return RecordingHistoryItem(
+            recordingURL: fileURL,
+            title: title,
+            recordedAt: recordedAt,
+            hasTranscript: allFileURLs.contains(transcriptURL),
+            hasSummary: allFileURLs.contains(summaryURL)
+        )
     }
 
     private nonisolated static func describeError(_ error: Error) -> String {

@@ -52,27 +52,32 @@ struct MenuBarView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            switch viewModel.pipelineStatus {
-            case .idle:
-                if viewModel.isOutputDirectorySet, let message = viewModel.errorMessage {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .lineLimit(2)
-                }
-            case .transcribing, .summarizing:
-                Text("文字起こし・要約中…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            case .completed:
-                Text("処理が完了しました")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            case .failed(let message):
+            if viewModel.isOutputDirectorySet, let message = viewModel.errorMessage {
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.red)
                     .lineLimit(2)
+            }
+
+            if !viewModel.pipelineJobs.isEmpty {
+                Divider()
+
+                PipelineJobsView(
+                    jobs: viewModel.pipelineJobs,
+                    activeCount: viewModel.activePipelineJobCount,
+                    waitingCount: viewModel.waitingPipelineJobCount
+                )
+            }
+
+            if viewModel.isOutputDirectorySet {
+                Divider()
+
+                RecordingHistoryView(
+                    items: viewModel.recordingHistory,
+                    isLoading: viewModel.isLoadingRecordingHistory,
+                    onReload: viewModel.loadRecordingHistory,
+                    onReveal: viewModel.revealRecordingInFinder
+                )
             }
 
             Divider()
@@ -82,7 +87,7 @@ struct MenuBarView: View {
             }
             .buttonStyle(.bordered)
         }
-        .frame(width: 280)
+        .frame(width: 320)
         .padding(12)
     }
 
@@ -93,7 +98,210 @@ struct MenuBarView: View {
     }
 }
 
+private struct RecordingHistoryView: View {
+    let items: [RecordingHistoryItem]
+    let isLoading: Bool
+    let onReload: () -> Void
+    let onReveal: (RecordingHistoryItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("録画履歴", systemImage: "clock.arrow.circlepath")
+                    .font(.headline)
+
+                Spacer()
+
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("録画履歴を読み込み中")
+                } else {
+                    Button(action: onReload) {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("録画履歴を更新")
+                }
+            }
+
+            if items.isEmpty, !isLoading {
+                Text("完成した録画はまだありません")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(items) { item in
+                            Button {
+                                onReveal(item)
+                            } label: {
+                                RecordingHistoryRow(item: item)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Finderで録画ファイルを表示")
+                        }
+                    }
+                }
+                .frame(maxHeight: 180)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("録画履歴")
+    }
+}
+
+private struct RecordingHistoryRow: View {
+    let item: RecordingHistoryItem
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "video.fill")
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    Text(item.recordedAt.formatted(date: .abbreviated, time: .shortened))
+
+                    if item.hasTranscript {
+                        Label("文字起こし", systemImage: "text.quote")
+                    }
+
+                    if item.hasSummary {
+                        Label("要約", systemImage: "doc.text")
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .labelStyle(.titleAndIcon)
+            }
+
+            Spacer(minLength: 0)
+
+            Image(systemName: "arrow.right.circle")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .contentShape(.rect)
+        .padding(.vertical, 3)
+    }
+}
+
+private struct PipelineJobsView: View {
+    let jobs: [PipelineJob]
+    let activeCount: Int
+    let waitingCount: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("録画後の処理", systemImage: "list.bullet.rectangle")
+                    .font(.headline)
+
+                Spacer()
+
+                Text(summaryText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ScrollView {
+                LazyVStack(spacing: 6) {
+                    ForEach(jobs) { job in
+                        PipelineJobRow(job: job)
+                    }
+                }
+            }
+            .frame(maxHeight: 170)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("録画後の処理")
+    }
+
+    private var summaryText: String {
+        if waitingCount > 0 {
+            return "処理中 \(activeCount)件・待機 \(waitingCount)件"
+        }
+        if activeCount > 0 {
+            return "\(activeCount)件を処理中"
+        }
+        return "最近の結果"
+    }
+}
+
+private struct PipelineJobRow: View {
+    let job: PipelineJob
+
+    var body: some View {
+        HStack(spacing: 8) {
+            statusIcon
+                .frame(width: 16, height: 16)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(job.createdAt.formatted(date: .omitted, time: .shortened))
+                    .font(.caption)
+                    .fontWeight(.medium)
+
+                Text(statusText)
+                    .font(.caption2)
+                    .foregroundStyle(statusColor)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        switch job.status {
+        case .waiting, .transcribing, .summarizing, .saving:
+            ProgressView()
+                .controlSize(.small)
+        case .completed:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+        }
+    }
+
+    private var statusText: String {
+        switch job.status {
+        case .waiting:
+            "待機中"
+        case .transcribing:
+            "文字起こし中"
+        case .summarizing:
+            "要約中"
+        case .saving:
+            "ファイルを保存中"
+        case .completed(let title):
+            "完了：\(title)"
+        case .failed(let message):
+            "失敗：\(message)"
+        }
+    }
+
+    private var statusColor: Color {
+        if case .failed = job.status {
+            return .red
+        }
+        return .secondary
+    }
+}
+
 #Preview {
     MenuBarView(viewModel: MenuBarViewModel())
-        .frame(width: 280)
+        .frame(width: 320)
 }
