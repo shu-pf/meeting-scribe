@@ -130,10 +130,21 @@ final class TranscriptionService: TranscriptionServiceProtocol {
         ]
         transcriptionLogger().info("Process 起動 executable=\(whisperURL.path, privacy: .public) cwd=\(wavDir.path, privacy: .public) args=\(process.arguments ?? [], privacy: .public)")
 
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
+        // 5時間分の文字起こしはPipeのバッファを超えるため、終了まで詰まらない一時ファイルへ流す。
+        let stdoutURL = transcriptionDir.appendingPathComponent(UUID().uuidString + ".stdout")
+        let stderrURL = transcriptionDir.appendingPathComponent(UUID().uuidString + ".stderr")
+        guard FileManager.default.createFile(atPath: stdoutURL.path, contents: nil),
+              FileManager.default.createFile(atPath: stderrURL.path, contents: nil) else {
+            throw TranscriptionError.outputEncodingFailed
+        }
+        defer {
+            try? FileManager.default.removeItem(at: stdoutURL)
+            try? FileManager.default.removeItem(at: stderrURL)
+        }
+        let stdoutHandle = try FileHandle(forWritingTo: stdoutURL)
+        let stderrHandle = try FileHandle(forWritingTo: stderrURL)
+        process.standardOutput = stdoutHandle
+        process.standardError = stderrHandle
 
         try process.run()
 
@@ -156,8 +167,10 @@ final class TranscriptionService: TranscriptionServiceProtocol {
             }
 
             process.terminationHandler = { _ in
-                let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                try? stdoutHandle.close()
+                try? stderrHandle.close()
+                let outData = (try? Data(contentsOf: stdoutURL)) ?? Data()
+                let errData = (try? Data(contentsOf: stderrURL)) ?? Data()
                 let text = (String(data: outData, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 let stderrText = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 transcriptionLogger().info("Process 終了 status=\(process.terminationStatus) stdoutLen=\(text.count) stderr=\(stderrText, privacy: .public)")

@@ -10,10 +10,27 @@ Claude Code・Codex 両対応。新コマンドの許可追加は `~/.claude/set
 
 ```sh
 env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  xcodebuild build -project MeetingScribe.xcodeproj -scheme "MeetingScribe - Debug" CODE_SIGN_IDENTITY=-
+  xcodebuild build -project MeetingScribe.xcodeproj -scheme "MeetingScribe - Debug"
 ```
 
 スキームは `"MeetingScribe - Debug"` / `"MeetingScribe - Release"`(引用符必須)。変更後は必ずビルドを通すこと。
+
+### Debug署名
+
+- 実際に起動して動作確認するDebugアプリは、Team `3R3JQ22JJF` の `Apple Development` 証明書で署名する
+- `CODE_SIGN_IDENTITY=-` によるアドホック署名は禁止。ビルドごとにDesignated Requirementが変わり、画面収録のTCC権限が失われる
+- ビルド後は `scripts/verify_debug_signing.sh <MeetingScribe.appのパス>` を実行し、安定した開発署名であることを確認してから動作確認する
+- コード署名証明書を利用できないCI等でコンパイルだけ確認する場合は `CODE_SIGNING_ALLOWED=NO` を使用できるが、その成果物を動作確認には使用しない
+
+## 動作確認
+
+- 機能変更後はビルド成功だけで完了とせず、Debugアプリを起動して変更した機能を実際に操作し、期待どおり動作することを確認する
+- 変更箇所に応じて正常系に加えて主要な異常系・境界条件も確認する
+- TCC権限、外部サービス、実機操作などに阻まれて変更フローを最後まで確認できない場合は、未確認部分と理由を明記し、ユーザーに必要な確認を依頼する。未確認のまま「動作確認済み」と報告しない
+- 画面収録権限は `scripts/check_screen_capture_permission.swift` をDebugアプリと同じbundle ID・開発証明書で署名して確認する
+- ウィンドウ閉鎖時のScreenCaptureKit終了通知を確認するときは、`scripts/check_window_close_signal.swift` をコンパイル・実行し、映像フレーム受信後の結果だけを有効とする
+- 録画の品質保証上限は5時間。長時間処理を変更したときは、5時間の音声入力に対して `scripts/check_long_audio_extraction.swift` を実行し、WAV抽出がメモリへ全量展開されないことを確認する
+- 5時間到達時は録画ファイルを正常終了して後処理へ渡し、ユーザーへローカル通知する。この自動終了経路を変更した場合は、短い上限を注入して境界動作を確認する
 
 ## Architecture
 
@@ -31,5 +48,5 @@ Resources/        whisperバイナリ・dylib群(build_whisper.sh生成物、手
 - 議事録生成は**日本語**固定(プロンプト変更時は必ず維持。過去に英語生成バグあり)
 - `Resources/` のバイナリは `scripts/build_whisper.sh` の生成物。手で編集しない
 - ScreenCaptureKit録画はTCC権限が必要でCIでは実行不可。録画以外の層をテスト対象とする
-- Debugのbundle ID: `com.shu-pf.MeetingScribe.dev`、Release: `com.shu-pf.MeetingScribe`(製品版と共存のため分離)
+- Debugは製品名 `MeetingScribe Dev`・bundle ID `com.shu-pf.MeetingScribe.dev`、Releaseは製品名 `MeetingScribe`・bundle ID `com.shu-pf.MeetingScribe`（製品版およびTCC権限表示と区別するため分離）
 - SwiftUI + Swift 6 strict concurrency、macOS 15.0以降

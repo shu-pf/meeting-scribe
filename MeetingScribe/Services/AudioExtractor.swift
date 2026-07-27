@@ -39,35 +39,74 @@ enum AudioExtractor {
         }
         let wavURL = tempDir.appendingPathComponent(UUID().uuidString + ".wav")
 
-        var pcmData = Data()
-        while let sampleBuffer = trackOutput.copyNextSampleBuffer() {
-            guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { continue }
-            var length = 0
-            var dataPointer: UnsafeMutablePointer<Int8>?
-            CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
-            guard let pointer = dataPointer, length > 0 else { continue }
-            pcmData.append(Data(bytes: pointer, count: length))
-        }
-
-        let dataCount = pcmData.count
-        let numSamples = dataCount / 2
-        let header = makeWAVHeader(numSamples: numSamples, sampleRate: 16000, channels: 1, bitsPerSample: 16)
-        let wavData = header + pcmData
-        guard FileManager.default.createFile(atPath: wavURL.path, contents: wavData) else {
+        guard FileManager.default.createFile(atPath: wavURL.path, contents: nil) else {
             throw AudioExtractorError.writeFailed(wavURL.path)
         }
-        if !FileManager.default.fileExists(atPath: wavURL.path) {
-            throw AudioExtractorError.writeFailed("作成直後に fileExists=false: \(wavURL.path)")
+        let fileHandle = try FileHandle(forWritingTo: wavURL)
+        var completed = false
+        defer {
+            try? fileHandle.close()
+            if !completed {
+                try? FileManager.default.removeItem(at: wavURL)
+            }
         }
+
+        // 5時間では約576MBになるため、PCM全体をメモリに保持せず逐次書き込む。
+        try fileHandle.write(contentsOf: makeWAVHeader(dataSize: 0, sampleRate: 16000, channels: 1, bitsPerSample: 16))
+        var dataSize: UInt64 = 0
+        while let sampleBuffer = trackOutput.copyNextSampleBuffer() {
+            try Task.checkCancellation()
+            guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { continue }
+            let length = CMBlockBufferGetDataLength(blockBuffer)
+            guard length > 0 else { continue }
+
+            var chunk = Data(count: length)
+            let status = chunk.withUnsafeMutableBytes { bytes in
+                guard let baseAddress = bytes.baseAddress else {
+                    return kCMBlockBufferBadCustomBlockSourceErr
+                }
+                return CMBlockBufferCopyDataBytes(
+                    blockBuffer,
+                    atOffset: 0,
+                    dataLength: length,
+                    destination: baseAddress
+                )
+            }
+            guard status == kCMBlockBufferNoErr else {
+                throw AudioExtractorError.readFailed("PCMデータの読み取りに失敗しました（\(status)）")
+            }
+            dataSize += UInt64(length)
+            guard dataSize <= UInt64(UInt32.max) - 36 else {
+                throw AudioExtractorError.fileTooLarge
+            }
+            try fileHandle.write(contentsOf: chunk)
+        }
+
+        guard reader.status == .completed else {
+            throw AudioExtractorError.readFailed(
+                reader.error?.localizedDescription ?? "AVAssetReaderが完了しませんでした"
+            )
+        }
+
+        try fileHandle.seek(toOffset: 0)
+        try fileHandle.write(
+            contentsOf: makeWAVHeader(
+                dataSize: UInt32(dataSize),
+                sampleRate: 16000,
+                channels: 1,
+                bitsPerSample: 16
+            )
+        )
+        try fileHandle.synchronize()
+        completed = true
         return wavURL
     }
 
-    private static func makeWAVHeader(numSamples: Int, sampleRate: Int, channels: Int, bitsPerSample: Int) -> Data {
-        let dataSize = numSamples * (bitsPerSample / 8) * channels
+    private static func makeWAVHeader(dataSize: UInt32, sampleRate: Int, channels: Int, bitsPerSample: Int) -> Data {
         var header = Data()
         header.append(contentsOf: [0x52, 0x49, 0x46, 0x46])
         let fileSize = 36 + dataSize
-        header.append(contentsOf: withUnsafeBytes(of: UInt32(fileSize).littleEndian) { Array($0) })
+        header.append(contentsOf: withUnsafeBytes(of: fileSize.littleEndian) { Array($0) })
         header.append(contentsOf: [0x57, 0x41, 0x56, 0x45])
         header.append(contentsOf: [0x66, 0x6D, 0x74, 0x20])
         header.append(contentsOf: withUnsafeBytes(of: UInt32(16).littleEndian) { Array($0) })
@@ -79,7 +118,7 @@ enum AudioExtractor {
         header.append(contentsOf: withUnsafeBytes(of: UInt16(channels * (bitsPerSample / 8)).littleEndian) { Array($0) })
         header.append(contentsOf: withUnsafeBytes(of: UInt16(bitsPerSample).littleEndian) { Array($0) })
         header.append(contentsOf: [0x64, 0x61, 0x74, 0x61])
-        header.append(contentsOf: withUnsafeBytes(of: UInt32(dataSize).littleEndian) { Array($0) })
+        header.append(contentsOf: withUnsafeBytes(of: dataSize.littleEndian) { Array($0) })
         return header
     }
 }
@@ -87,6 +126,8 @@ enum AudioExtractor {
 enum AudioExtractorError: LocalizedError {
     case noAudioTrack
     case writeFailed(String)
+    case readFailed(String)
+    case fileTooLarge
 
     var errorDescription: String? {
         switch self {
@@ -94,6 +135,10 @@ enum AudioExtractorError: LocalizedError {
             return "音声トラックが見つかりません。"
         case .writeFailed(let path):
             return "音声ファイルの書き込みに失敗しました: \(path)"
+        case .readFailed(let message):
+            return "音声データの読み取りに失敗しました: \(message)"
+        case .fileTooLarge:
+            return "抽出した音声がWAV形式の上限を超えました。"
         }
     }
 }

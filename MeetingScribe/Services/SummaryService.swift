@@ -18,6 +18,8 @@ protocol SummaryServiceProtocol: Sendable {
 
 private let ollamaBaseURL = "http://localhost:11434"
 private let tagsTimeout: TimeInterval = 5
+/// 品質上限の5時間会議でも、ローカルLLMの初回ロードと生成を途中で打ち切らない。
+private let generateTimeout: TimeInterval = 5 * 60 * 60
 /// 1時間超の会議も見込んだコンテキスト長（128K トークン）
 private let defaultNumCtx = 131_072
 /// 要約文が途中で切れないよう生成トークン上限を指定
@@ -38,6 +40,7 @@ final class SummaryService: SummaryServiceProtocol {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = generateTimeout
 
         let systemPrompt = """
             以下の会議の文字起こしを要約してください。

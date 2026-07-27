@@ -116,7 +116,10 @@ struct SettingsView: View {
             }
             Section("バージョン情報") {
                 LabeledContent("バージョン") {
-                    Text(appVersion)
+                    HStack(spacing: 8) {
+                        Text(appVersion)
+                        DevelopmentBuildBadge()
+                    }
                 }
                 LabeledContent("作成者") {
                     Text("Shugo Furuse")

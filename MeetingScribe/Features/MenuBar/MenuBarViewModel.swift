@@ -4,6 +4,7 @@
 //
 
 import Combine
+import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 import SwiftUI
@@ -144,6 +145,12 @@ final class MenuBarViewModel: ObservableObject {
                         Task { @MainActor in
                             self.handleStreamStoppedUnexpectedly(result: result)
                         }
+                    },
+                    onMaximumDurationReached: { [weak self] in
+                        guard let self else { return }
+                        Task { @MainActor in
+                            self.sendMaximumDurationNotification()
+                        }
                     }
                 )
                 isRecording = true
@@ -203,6 +210,19 @@ final class MenuBarViewModel: ObservableObject {
         let content = UNMutableNotificationContent()
         content.title = "会議の要約が完了しました"
         content.body = title
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    private func sendMaximumDurationNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "5時間の上限に達しました"
+        content.body = "録画を自動終了しています。完了後に文字起こしと要約を開始します。"
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
@@ -285,6 +305,19 @@ final class MenuBarViewModel: ObservableObject {
             defer { isLoadingContent = false }
             isOutputDirectorySet = await settings.outputDirectoryURL != nil
             loadRecordingHistory()
+
+            guard CGPreflightScreenCaptureAccess() else {
+                _ = CGRequestScreenCaptureAccess()
+                let appName = Bundle.main.object(
+                    forInfoDictionaryKey: "CFBundleDisplayName"
+                ) as? String ?? "MeetingScribe"
+                errorMessage = "画面収録の許可が必要です。システム設定で\(appName)を許可し、アプリを再起動してください。"
+                displayItems = []
+                windowItems = []
+                diagnosticLog.warning("画面収録権限が未許可のため録画対象を取得できません")
+                return
+            }
+
             do {
                 let content = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<SCShareableContent, Error>) in
                     SCShareableContent.getExcludingDesktopWindows(

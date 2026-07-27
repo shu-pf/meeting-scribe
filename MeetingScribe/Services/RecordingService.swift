@@ -34,7 +34,13 @@ private func makeAACOutputSettings(from formatDesc: CMFormatDescription) -> [Str
 private let recordingLog = DiagnosticLogger(category: "Recording")
 
 protocol RecordingServiceProtocol: Sendable {
-    func startRecording(displayID: UInt32?, windowID: UInt32?, outputURL: URL, onStreamStoppedUnexpectedly: (@Sendable (Result<URL, Error>) -> Void)?) async throws
+    func startRecording(
+        displayID: UInt32?,
+        windowID: UInt32?,
+        outputURL: URL,
+        onStreamStoppedUnexpectedly: (@Sendable (Result<URL, Error>) -> Void)?,
+        onMaximumDurationReached: (@Sendable () -> Void)?
+    ) async throws
     func stopRecording() async throws -> URL
     var isRecording: Bool { get async }
 }
@@ -329,20 +335,34 @@ final class RecordingService: RecordingServiceProtocol {
     private var streamDelegate: RecordingStreamDelegate?
     /// ストリームが予期せず停止したときに呼ぶコールバック（録画ファイル URL または Error）
     private var onStreamStoppedUnexpectedly: (@Sendable (Result<URL, Error>) -> Void)?
+    private var onMaximumDurationReached: (@Sendable () -> Void)?
     /// ウィンドウ録画時にのみ設定。フォールバックで「ウィンドウがまだ存在するか」をポールするために使用
     private var recordingWindowID: UInt32?
     private var windowExistenceCheckTask: Task<Void, Never>?
+    private var maximumDurationTask: Task<Void, Never>?
     private let videoQueue = DispatchQueue(label: "MeetingScribe.recording.video")
     private let windowCheckInterval: UInt64 = 2  // 秒
+    private let maximumRecordingDuration: Duration
     private var _isRecording = false
+
+    init(maximumRecordingDuration: Duration = .seconds(5 * 60 * 60)) {
+        self.maximumRecordingDuration = maximumRecordingDuration
+    }
 
     var isRecording: Bool {
         get async { _isRecording }
     }
 
-    func startRecording(displayID: UInt32?, windowID: UInt32?, outputURL: URL, onStreamStoppedUnexpectedly: (@Sendable (Result<URL, Error>) -> Void)? = nil) async throws {
+    func startRecording(
+        displayID: UInt32?,
+        windowID: UInt32?,
+        outputURL: URL,
+        onStreamStoppedUnexpectedly: (@Sendable (Result<URL, Error>) -> Void)? = nil,
+        onMaximumDurationReached: (@Sendable () -> Void)? = nil
+    ) async throws {
         guard !_isRecording else { return }
         self.onStreamStoppedUnexpectedly = onStreamStoppedUnexpectedly
+        self.onMaximumDurationReached = onMaximumDurationReached
         recordingLog.info(
             "録画開始要求 displayID=\(String(describing: displayID)) windowID=\(String(describing: windowID)) outputURL=\(outputURL.path)"
         )
@@ -473,6 +493,14 @@ final class RecordingService: RecordingServiceProtocol {
         recordingLog.info(
             "録画開始成功 mode=\(windowID == nil ? "display" : "window") width=\(width) height=\(height)"
         )
+        maximumDurationTask = Task { [weak self, maximumRecordingDuration] in
+            do {
+                try await Task.sleep(for: maximumRecordingDuration)
+            } catch {
+                return
+            }
+            await self?.stopAtMaximumDuration()
+        }
 
         // ウィンドウ録画時: デリゲートが呼ばれない環境でも検知するため、定期的にウィンドウ存在を確認する
         if let wid = windowID {
@@ -480,6 +508,21 @@ final class RecordingService: RecordingServiceProtocol {
             windowExistenceCheckTask = Task { [weak self] in
                 await self?.pollWindowExistence(windowID: wid)
             }
+        }
+    }
+
+    private func stopAtMaximumDuration() async {
+        guard _isRecording else { return }
+        recordingLog.info("録画が5時間の品質保証上限に到達したため自動終了します")
+        let completion = onStreamStoppedUnexpectedly
+        let limitReached = onMaximumDurationReached
+        maximumDurationTask = nil
+        limitReached?()
+        do {
+            let url = try await stopRecording()
+            completion?(.success(url))
+        } catch {
+            completion?(.failure(error))
         }
     }
 
@@ -519,6 +562,8 @@ final class RecordingService: RecordingServiceProtocol {
     /// ストリームがシステム側で停止したとき（例: 録画元ウィンドウが閉じられたとき）に呼ばれる。stopCapture は呼ばず Writer 終了のみ行い、コールバックで URL を渡す。
     private func handleStreamStoppedUnexpectedly() {
         guard _isRecording else { return }
+        maximumDurationTask?.cancel()
+        maximumDurationTask = nil
         windowExistenceCheckTask?.cancel()
         windowExistenceCheckTask = nil
         recordingWindowID = nil
@@ -536,6 +581,7 @@ final class RecordingService: RecordingServiceProtocol {
             currentOutputURL = nil
             let cb = onStreamStoppedUnexpectedly
             onStreamStoppedUnexpectedly = nil
+            onMaximumDurationReached = nil
             cb?(.failure(RecordingError.notRecording))
             return
         }
@@ -549,6 +595,7 @@ final class RecordingService: RecordingServiceProtocol {
         streamDelegate = nil
         currentOutputURL = nil
         onStreamStoppedUnexpectedly = nil
+        onMaximumDurationReached = nil
 
         recordingLog.info("handleStreamStoppedUnexpectedly: Writer 終了処理へ outputURL=\(url.path)")
 
@@ -623,6 +670,9 @@ final class RecordingService: RecordingServiceProtocol {
         audioInput = nil
         streamDelegate = nil
         onStreamStoppedUnexpectedly = nil
+        onMaximumDurationReached = nil
+        maximumDurationTask?.cancel()
+        maximumDurationTask = nil
         windowExistenceCheckTask?.cancel()
         windowExistenceCheckTask = nil
         recordingWindowID = nil

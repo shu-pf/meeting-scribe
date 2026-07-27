@@ -13,6 +13,19 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+#if DEBUG
+            HStack {
+                Text("MeetingScribe")
+                    .font(.headline)
+
+                Spacer()
+
+                DevelopmentBuildBadge()
+            }
+
+            Divider()
+#endif
+
             WindowPickerView(
                 selectedDisplayID: $viewModel.selectedDisplayID,
                 selectedWindowID: $viewModel.selectedWindowID,
