@@ -13,6 +13,8 @@ final class SettingsViewModel: ObservableObject {
     @Published var outputDirectoryPath: String = ""
     @Published var selectedWhisperModelID: String = ""
     @Published var selectedSummaryModelID: String = ""
+    @Published var microphoneRecordingPreference: MicrophoneRecordingPreference =
+        .askEveryTime
     @Published var launchAtLogin: Bool = false
     @Published var whisperModelIDs: [String] = []
     @Published var summaryModelIDs: [String] = []
@@ -25,7 +27,6 @@ final class SettingsViewModel: ObservableObject {
         }
         return [selected] + summaryModelIDs
     }
-    @Published var summaryContextLength: Int = 131_072
     @Published var showWhisperModelDownloadSheet: Bool = false
 
     private let settings: SettingsServiceProtocol
@@ -50,7 +51,8 @@ final class SettingsViewModel: ObservableObject {
         }
         selectedWhisperModelID = await settings.selectedWhisperModelID ?? ""
         selectedSummaryModelID = await settings.selectedSummaryModelID ?? ""
-        summaryContextLength = await settings.summaryContextLength
+        microphoneRecordingPreference =
+            await settings.microphoneRecordingPreference
         if #available(macOS 13.0, *) {
             let enabled = SMAppService.mainApp.status == .enabled
             launchAtLogin = enabled
@@ -95,9 +97,11 @@ final class SettingsViewModel: ObservableObject {
         selectedSummaryModelID = id
     }
 
-    func setSummaryContextLength(_ value: Int) async {
-        await settings.setSummaryContextLength(value)
-        summaryContextLength = value
+    func setMicrophoneRecordingPreference(
+        _ preference: MicrophoneRecordingPreference
+    ) async {
+        await settings.setMicrophoneRecordingPreference(preference)
+        microphoneRecordingPreference = preference
     }
 
     func setLaunchAtLogin(_ enabled: Bool) async {

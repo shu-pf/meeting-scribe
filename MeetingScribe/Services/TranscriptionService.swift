@@ -8,6 +8,7 @@
 //  出力: 標準出力にテキスト
 //
 
+import Darwin
 import Foundation
 import os
 
@@ -16,7 +17,11 @@ private nonisolated func transcriptionLogger() -> Logger {
 }
 
 protocol TranscriptionServiceProtocol: Sendable {
-    func transcribe(audioOrVideoURL: URL, modelID: String) async throws -> String
+    func transcribe(
+        audioOrVideoURL: URL,
+        modelID: String,
+        workingDirectory: URL?
+    ) async throws -> String
 }
 
 final class TranscriptionService: TranscriptionServiceProtocol {
@@ -26,7 +31,11 @@ final class TranscriptionService: TranscriptionServiceProtocol {
         self.store = store
     }
 
-    func transcribe(audioOrVideoURL: URL, modelID: String) async throws -> String {
+    func transcribe(
+        audioOrVideoURL: URL,
+        modelID: String,
+        workingDirectory: URL? = nil
+    ) async throws -> String {
         try Task.checkCancellation()
 
         transcriptionLogger().info("transcribe 開始 modelID=\(modelID, privacy: .public) input=\(audioOrVideoURL.path, privacy: .public)")
@@ -55,7 +64,16 @@ final class TranscriptionService: TranscriptionServiceProtocol {
 
         let inSandbox = tmpDir.path.contains("Containers")
         let transcriptionDir: URL
-        if inSandbox {
+        if let workingDirectory {
+            try FileManager.default.createDirectory(
+                at: workingDirectory,
+                withIntermediateDirectories: true
+            )
+            transcriptionDir = workingDirectory
+            transcriptionLogger().info(
+                "WAV 作業ディレクトリ: 永続ジョブ → \(workingDirectory.path, privacy: .public)"
+            )
+        } else if inSandbox {
             try FileManager.default.createDirectory(at: cachesDir, withIntermediateDirectories: true)
             transcriptionDir = cachesDir
             transcriptionLogger().info("WAV 作業ディレクトリ: caches（サンドボックス検出）→ \(cachesDir.path, privacy: .public)")
@@ -146,7 +164,22 @@ final class TranscriptionService: TranscriptionServiceProtocol {
         process.standardOutput = stdoutHandle
         process.standardError = stderrHandle
 
+        let processIdentifierURL = transcriptionDir.appendingPathComponent(
+            "whisper.pid"
+        )
+        await terminateStaleWhisperProcess(
+            identifierURL: processIdentifierURL,
+            expectedExecutableURL: whisperURL
+        )
         try process.run()
+        try String(process.processIdentifier).write(
+            to: processIdentifierURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        defer {
+            try? FileManager.default.removeItem(at: processIdentifierURL)
+        }
 
         let result: String = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { cont in
@@ -191,6 +224,56 @@ final class TranscriptionService: TranscriptionServiceProtocol {
 
         try Task.checkCancellation()
         return result
+    }
+
+    /// アプリの強制終了後に残った同一バンドルのWhisperだけを停止する。
+    private func terminateStaleWhisperProcess(
+        identifierURL: URL,
+        expectedExecutableURL: URL
+    ) async {
+        guard let text = try? String(contentsOf: identifierURL, encoding: .utf8),
+              let processIdentifier = Int32(
+                  text.trimmingCharacters(in: .whitespacesAndNewlines)
+              ),
+              processIdentifier > 1 else {
+            return
+        }
+
+        var pathBuffer = [CChar](repeating: 0, count: 4_096)
+        let pathLength = proc_pidpath(
+            processIdentifier,
+            &pathBuffer,
+            UInt32(pathBuffer.count)
+        )
+        guard pathLength > 0 else {
+            try? FileManager.default.removeItem(at: identifierURL)
+            return
+        }
+        let runningExecutablePath = String(cString: pathBuffer)
+        guard URL(fileURLWithPath: runningExecutablePath).standardizedFileURL
+            == expectedExecutableURL.standardizedFileURL else {
+            transcriptionLogger().warning(
+                "残留PIDは別プロセスのため停止しない pid=\(processIdentifier)"
+            )
+            try? FileManager.default.removeItem(at: identifierURL)
+            return
+        }
+
+        transcriptionLogger().warning(
+            "前回終了時に残ったWhisperを停止 pid=\(processIdentifier)"
+        )
+        _ = Darwin.kill(processIdentifier, SIGTERM)
+        for _ in 0..<20 {
+            guard Darwin.kill(processIdentifier, 0) == 0 else { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        if Darwin.kill(processIdentifier, 0) == 0 {
+            transcriptionLogger().warning(
+                "残留Whisperが終了しないため強制停止 pid=\(processIdentifier)"
+            )
+            _ = Darwin.kill(processIdentifier, SIGKILL)
+        }
+        try? FileManager.default.removeItem(at: identifierURL)
     }
 }
 

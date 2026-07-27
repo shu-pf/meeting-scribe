@@ -5,8 +5,9 @@
 //  Created by Furuse Shugo on 2026/03/07.
 //
 
-import SwiftUI
+import AppKit
 import Sparkle
+import SwiftUI
 
 @main
 struct MeetingScribeApp: App {
@@ -41,11 +42,26 @@ struct MeetingScribeApp: App {
                 .onAppear {
                     NSApp.setActivationPolicy(.accessory)
                     menuBarViewModel.requestNotificationPermission()
+                    menuBarViewModel.restorePipelineJobsIfNeeded()
+                }
+                .onReceive(
+                    NSWorkspace.shared.notificationCenter.publisher(
+                        for: NSWorkspace.willSleepNotification
+                    )
+                ) { _ in
+                    menuBarViewModel.pausePipelineJobsForSystemSleep()
+                }
+                .onReceive(
+                    NSWorkspace.shared.notificationCenter.publisher(
+                        for: NSWorkspace.didWakeNotification
+                    )
+                ) { _ in
+                    menuBarViewModel.resumePipelineJobsAfterSystemWake()
                 }
         }
         .menuBarExtraStyle(.window)
 
-        WindowGroup(id: "settings", for: String.self) { _ in
+        Window("MeetingScribe 設定", id: "settings") {
             ContentView()
                 .environmentObject(checkForUpdatesViewModel)
         }

@@ -7,8 +7,22 @@ import Foundation
 
 /// パイプラインの処理結果
 struct PipelineResult: Sendable {
-    /// 会議タイトル（要約がない場合は「無題」）
+    /// 要約モデルが生成した会議タイトル
     let meetingTitle: String
+}
+
+struct PipelineRequest: Sendable {
+    let id: UUID
+    let fileURL: URL
+    let outputDirectoryURL: URL
+    let recordingDate: Date
+    let whisperModelID: String
+    let summaryModelID: String
+}
+
+private struct PipelineSummaryCheckpoint: Codable {
+    let result: SummarizeResult
+    let baseName: String
 }
 
 /// 録画後パイプラインの進捗
@@ -21,7 +35,7 @@ enum PipelineProgress: Sendable {
 protocol RecordingPipelineProtocol: Sendable {
     @discardableResult
     func processRecording(
-        fileURL: URL,
+        request: PipelineRequest,
         onProgress: @escaping @Sendable (PipelineProgress) async -> Void
     ) async throws -> PipelineResult
 }
@@ -39,96 +53,153 @@ final class RecordingPipeline: RecordingPipelineProtocol {
 
     private let transcription: TranscriptionServiceProtocol
     private let summary: SummaryServiceProtocol
-    private let settings: SettingsServiceProtocol
-
     init(
         transcription: TranscriptionServiceProtocol,
-        summary: SummaryServiceProtocol,
-        settings: SettingsServiceProtocol
+        summary: SummaryServiceProtocol
     ) {
         self.transcription = transcription
         self.summary = summary
-        self.settings = settings
     }
 
     @discardableResult
     func processRecording(
-        fileURL: URL,
+        request: PipelineRequest,
         onProgress: @escaping @Sendable (PipelineProgress) async -> Void
     ) async throws -> PipelineResult {
-        guard let outputDir = await settings.outputDirectoryURL else {
-            diagnosticLog.error("パイプライン中断: 出力フォルダ未設定 fileURL=\(fileURL.path)")
-            return PipelineResult(meetingTitle: "無題")
-        }
+        let fileURL = request.fileURL
+        let outputDir = request.outputDirectoryURL
         diagnosticLog.info("パイプライン処理開始 fileURL=\(fileURL.path)")
         let fileManager = FileManager.default
         let ext = fileURL.pathExtension.isEmpty ? "mp4" : fileURL.pathExtension
+        try fileManager.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        let workDirectory = try PipelineWorkspace.workDirectory(for: request.id)
+        try fileManager.createDirectory(
+            at: workDirectory,
+            withIntermediateDirectories: true
+        )
+        let transcriptCheckpointURL = workDirectory
+            .appendingPathComponent("transcript")
+            .appendingPathExtension("txt")
+        let summaryCheckpointURL = workDirectory
+            .appendingPathComponent("summary")
+            .appendingPathExtension("json")
 
         // 1. 文字起こし
         await onProgress(.transcribing)
-        guard let modelID = await settings.selectedWhisperModelID,
-              !modelID.isEmpty else {
+        guard !request.whisperModelID.isEmpty else {
             throw RecordingPipelineError.whisperModelNotSelected
         }
-        diagnosticLog.info("文字起こし開始 modelID=\(modelID)")
-        let transcript = try await transcription.transcribe(audioOrVideoURL: fileURL, modelID: modelID)
-        diagnosticLog.info("文字起こし完了 characterCount=\(transcript.count)")
+        let transcript: String
+        if fileManager.fileExists(atPath: transcriptCheckpointURL.path) {
+            transcript = try String(
+                contentsOf: transcriptCheckpointURL,
+                encoding: .utf8
+            )
+            diagnosticLog.info(
+                "文字起こしチェックポイントから再開 characterCount=\(transcript.count)"
+            )
+        } else {
+            guard fileManager.fileExists(atPath: fileURL.path) else {
+                throw RecordingPipelineError.recordingNotFound(fileURL.path)
+            }
+            diagnosticLog.info(
+                "文字起こし開始 modelID=\(request.whisperModelID)"
+            )
+            transcript = try await transcription.transcribe(
+                audioOrVideoURL: fileURL,
+                modelID: request.whisperModelID,
+                workingDirectory: workDirectory
+            )
+            try transcript.write(
+                to: transcriptCheckpointURL,
+                atomically: true,
+                encoding: .utf8
+            )
+            diagnosticLog.info("文字起こし完了 characterCount=\(transcript.count)")
+        }
 
         // 2. 文字起こしをすぐに出力（要約の前。日時のみのファイル名）
-        let recordingDate = (try? fileManager.attributesOfItem(atPath: fileURL.path)[.creationDate] as? Date) ?? Date()
-        let dateString = Self.baseNameDateFormatter.string(from: recordingDate)
-        let earlyTranscriptURL = outputDir.appendingPathComponent("\(dateString)_transcript.md")
+        let dateString = Self.baseNameDateFormatter.string(from: request.recordingDate)
+        let earlyTranscriptURL = outputDir.appendingPathComponent(
+            "\(dateString)_\(request.id.uuidString.prefix(8))_transcript.md"
+        )
         let markdownTranscript = "# 文字起こし\n\n\(transcript)"
         try markdownTranscript.write(to: earlyTranscriptURL, atomically: true, encoding: .utf8)
 
-        // 3. 要約（設定があれば）→ タイトル取得。なければ「無題」
-        let meetingTitle: String
-        var summaryResult: SummarizeResult?
-        if let summaryModelID = await settings.selectedSummaryModelID, !summaryModelID.isEmpty {
-            await onProgress(.summarizing)
-            let numCtx = await settings.summaryContextLength
-            diagnosticLog.info(
-                "要約開始 modelID=\(summaryModelID) contextLength=\(numCtx)"
-            )
-            let result = try await summary.summarize(transcript: transcript, modelID: summaryModelID, numCtx: numCtx)
-            summaryResult = result
-            meetingTitle = result.title
-            diagnosticLog.info("要約完了")
-        } else {
-            meetingTitle = "無題"
-            diagnosticLog.info("要約をスキップ: モデル未設定")
+        // 3. 要約 → タイトル取得
+        guard !request.summaryModelID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).isEmpty else {
+            throw RecordingPipelineError.summaryModelNotSelected
         }
+        await onProgress(.summarizing)
+        let summaryCheckpoint: PipelineSummaryCheckpoint
+        if fileManager.fileExists(atPath: summaryCheckpointURL.path) {
+            summaryCheckpoint = try JSONDecoder().decode(
+                PipelineSummaryCheckpoint.self,
+                from: Data(contentsOf: summaryCheckpointURL)
+            )
+            diagnosticLog.info("要約チェックポイントから再開")
+        } else {
+            diagnosticLog.info(
+                "要約開始 modelID=\(request.summaryModelID) characterCount=\(transcript.count)"
+            )
+            let summaryResult = try await summary.summarize(
+                transcript: transcript,
+                modelID: request.summaryModelID
+            )
+            let sanitizedTitle = Self.sanitizeFileName(summaryResult.title)
+            let preferredBaseName = "\(dateString)_\(sanitizedTitle)"
+            let baseName = Self.availableBaseName(
+                preferredBaseName,
+                sourceURL: fileURL,
+                outputDirectory: outputDir,
+                extension: ext,
+                fileManager: fileManager
+            )
+            summaryCheckpoint = PipelineSummaryCheckpoint(
+                result: summaryResult,
+                baseName: baseName
+            )
+            try JSONEncoder().encode(summaryCheckpoint).write(
+                to: summaryCheckpointURL,
+                options: .atomic
+            )
+        }
+        let summaryResult = summaryCheckpoint.result
+        let meetingTitle = summaryResult.title
+        diagnosticLog.info("要約完了")
 
         await onProgress(.saving)
 
-        // 4. 日時 + 会議名で baseName を生成
-        let sanitizedTitle = Self.sanitizeFileName(meetingTitle)
-        let baseName = "\(dateString)_\(sanitizedTitle)"
+        // 4. 要約完了時に確定した日時 + 会議名の baseName を使用
+        let baseName = summaryCheckpoint.baseName
 
         // 5. 録画を完成名へ移動（同じ出力フォルダ内なので再コピーしない）
         let recordingDestURL = outputDir.appendingPathComponent("\(baseName).\(ext)")
         let samePath = fileURL.standardizedFileURL.path == recordingDestURL.standardizedFileURL.path
         if !samePath {
-            if fileManager.fileExists(atPath: recordingDestURL.path) {
-                try fileManager.removeItem(at: recordingDestURL)
+            if fileManager.fileExists(atPath: fileURL.path) {
+                try fileManager.moveItem(at: fileURL, to: recordingDestURL)
+            } else if !fileManager.fileExists(atPath: recordingDestURL.path) {
+                throw RecordingPipelineError.recordingNotFound(fileURL.path)
             }
-            try fileManager.moveItem(at: fileURL, to: recordingDestURL)
         }
 
-        // 6. 文字起こしを baseName にリネーム（同一 path の場合はスキップ）
+        // 6. チェックポイントから文字起こしを完成名で保存する
         let transcriptURL = outputDir.appendingPathComponent("\(baseName)_transcript.md")
-        if earlyTranscriptURL.standardizedFileURL.path != transcriptURL.standardizedFileURL.path {
-            if fileManager.fileExists(atPath: transcriptURL.path) {
-                try fileManager.removeItem(at: transcriptURL)
-            }
-            try fileManager.moveItem(at: earlyTranscriptURL, to: transcriptURL)
-        }
+        try markdownTranscript.write(
+            to: transcriptURL,
+            atomically: true,
+            encoding: .utf8
+        )
 
         // 7. 要約を出力（先頭に会議名を明示）
-        if let result = summaryResult {
-            let summaryURL = outputDir.appendingPathComponent("\(baseName)_summary.md")
-            let markdownSummary = "# 要約\n\n## 会議名\n\(result.title)\n\n\(result.body)"
-            try markdownSummary.write(to: summaryURL, atomically: true, encoding: .utf8)
+        let summaryURL = outputDir.appendingPathComponent("\(baseName)_summary.md")
+        let markdownSummary = "# 要約\n\n## 会議名\n\(summaryResult.title)\n\n\(summaryResult.body)"
+        try markdownSummary.write(to: summaryURL, atomically: true, encoding: .utf8)
+        if earlyTranscriptURL.standardizedFileURL != transcriptURL.standardizedFileURL {
+            try? fileManager.removeItem(at: earlyTranscriptURL)
         }
 
         diagnosticLog.info("パイプライン処理完了 baseName=\(baseName)")
@@ -146,15 +217,43 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         if result.isEmpty { return "無題" }
         return String(result.prefix(80))
     }
+
+    private static func availableBaseName(
+        _ preferredBaseName: String,
+        sourceURL: URL,
+        outputDirectory: URL,
+        extension ext: String,
+        fileManager: FileManager
+    ) -> String {
+        var candidate = preferredBaseName
+        var suffix = 2
+        while true {
+            let candidateURL = outputDirectory
+                .appendingPathComponent(candidate)
+                .appendingPathExtension(ext)
+            if candidateURL.standardizedFileURL == sourceURL.standardizedFileURL
+                || !fileManager.fileExists(atPath: candidateURL.path) {
+                return candidate
+            }
+            candidate = "\(preferredBaseName)-\(suffix)"
+            suffix += 1
+        }
+    }
 }
 
 private enum RecordingPipelineError: LocalizedError {
     case whisperModelNotSelected
+    case summaryModelNotSelected
+    case recordingNotFound(String)
 
     var errorDescription: String? {
         switch self {
         case .whisperModelNotSelected:
             "文字起こしモデルが選択されていません。設定からモデルをダウンロードしてください。"
+        case .summaryModelNotSelected:
+            "要約モデルが選択されていません。設定から要約モデルを選択してください。"
+        case .recordingNotFound(let path):
+            "処理を再開する録画ファイルが見つかりません: \(path)"
         }
     }
 }

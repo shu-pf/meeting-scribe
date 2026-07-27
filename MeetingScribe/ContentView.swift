@@ -10,11 +10,10 @@ import SwiftUI
 /// 設定ウィンドウのルート。アプリクリックで開くメインウィンドウに表示する。
 struct ContentView: View {
     @State private var showFirstLaunchGuidance = false
-    @State private var triggerWhisperSheetAfterGuidance = false
     private let settings = SettingsService()
 
     var body: some View {
-        SettingsView(triggerWhisperSheetAfterGuidance: $triggerWhisperSheetAfterGuidance)
+        SettingsView()
             .onAppear {
                 NSApp.setActivationPolicy(.regular)
             }
@@ -30,8 +29,8 @@ struct ContentView: View {
                 FirstLaunchGuidanceView {
                     Task {
                         await settings.setHasSeenFirstLaunchGuidance(true)
+                        await settings.setInitialSetupStepRawValue(0)
                         showFirstLaunchGuidance = false
-                        triggerWhisperSheetAfterGuidance = true
                     }
                 }
             }

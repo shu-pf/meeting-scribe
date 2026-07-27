@@ -6,34 +6,59 @@
 import SwiftUI
 import AppKit
 
-private struct ContextLengthPreset {
-    let label: String
-    let value: Int
-}
-
 @MainActor
 struct SettingsView: View {
-    /// ガイダンスを閉じたあと、Whisper モデル未設定ならダウンロード画面を出すためのトリガー（ContentView から渡す）
-    @Binding var triggerWhisperSheetAfterGuidance: Bool
-
-    private static let contextLengthPresets: [ContextLengthPreset] = [
-        ContextLengthPreset(label: "4K", value: 4_096),
-        ContextLengthPreset(label: "8K", value: 8_192),
-        ContextLengthPreset(label: "16K", value: 16_384),
-        ContextLengthPreset(label: "32K", value: 32_768),
-        ContextLengthPreset(label: "64K", value: 65_536),
-        ContextLengthPreset(label: "128K", value: 131_072),
-        ContextLengthPreset(label: "256K", value: 262_144)
-    ]
-
-    @EnvironmentObject private var checkForUpdatesViewModel: CheckForUpdatesViewModel
-
     @StateObject private var viewModel = SettingsViewModel(
         whisperModelStore: WhisperModelStore.shared,
         summaryService: SummaryService()
     )
     @State private var whisperDownloader = WhisperModelDownloader()
     private let settings = SettingsService()
+
+    var body: some View {
+        TabView {
+            Tab("録画", systemImage: "record.circle") {
+                RecordingSettingsTab(viewModel: viewModel)
+            }
+
+            Tab("AIモデル", systemImage: "brain") {
+                ModelSettingsTab(viewModel: viewModel)
+            }
+
+            Tab("起動・更新", systemImage: "arrow.triangle.2.circlepath") {
+                GeneralSettingsTab(viewModel: viewModel)
+            }
+
+            Tab("ログ・情報", systemImage: "doc.text.magnifyingglass") {
+                InformationSettingsTab()
+            }
+        }
+        .frame(minWidth: 460, minHeight: 480)
+        .task {
+            await viewModel.load()
+            if await settings.hasSeenFirstLaunchGuidance,
+               await viewModel.shouldShowWhisperModelDownloadSheet() {
+                viewModel.showWhisperModelDownloadSheet = true
+            }
+        }
+        .sheet(isPresented: $viewModel.showWhisperModelDownloadSheet) {
+            WhisperModelDownloadView(
+                onComplete: { modelID in
+                    Task {
+                        await viewModel.setSelectedWhisperModelID(modelID)
+                        await viewModel.load()
+                    }
+                },
+                store: WhisperModelStore.shared,
+                downloader: whisperDownloader
+            )
+        }
+    }
+}
+
+@MainActor
+private struct RecordingSettingsTab: View {
+    @ObservedObject var viewModel: SettingsViewModel
 
     var body: some View {
         Form {
@@ -51,11 +76,64 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            Section("マイク") {
+                Picker(
+                    "自分の声",
+                    selection: Binding(
+                        get: { viewModel.microphoneRecordingPreference },
+                        set: { preference in
+                            Task {
+                                await viewModel.setMicrophoneRecordingPreference(
+                                    preference
+                                )
+                            }
+                        }
+                    )
+                ) {
+                    ForEach(MicrophoneRecordingPreference.allCases) { preference in
+                        Text(preference.title).tag(preference)
+                    }
+                }
+
+                Text(viewModel.microphoneRecordingPreference.explanation)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func openOutputFolderPicker() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { await viewModel.setOutputDirectory(url) }
+        }
+    }
+}
+
+@MainActor
+private struct ModelSettingsTab: View {
+    @ObservedObject var viewModel: SettingsViewModel
+
+    var body: some View {
+        Form {
             Section("文字起こし（Whisper）") {
-                Picker("モデル", selection: Binding(
-                    get: { viewModel.selectedWhisperModelID },
-                    set: { new in Task { await viewModel.setSelectedWhisperModelID(new) } }
-                )) {
+                Picker(
+                    "モデル",
+                    selection: Binding(
+                        get: { viewModel.selectedWhisperModelID },
+                        set: { modelID in
+                            Task {
+                                await viewModel.setSelectedWhisperModelID(modelID)
+                            }
+                        }
+                    )
+                ) {
                     Text("未選択").tag("")
                     ForEach(viewModel.whisperModelIDs, id: \.self) { id in
                         Text(id).tag(id)
@@ -65,38 +143,75 @@ struct SettingsView: View {
                     viewModel.showWhisperModelDownloadSheet = true
                 }
             }
+
             Section("要約（LLM）") {
-                Picker("モデル", selection: Binding(
-                    get: { viewModel.selectedSummaryModelID },
-                    set: { new in Task { await viewModel.setSelectedSummaryModelID(new) } }
-                )) {
+                Picker(
+                    "モデル",
+                    selection: Binding(
+                        get: { viewModel.selectedSummaryModelID },
+                        set: { modelID in
+                            Task {
+                                await viewModel.setSelectedSummaryModelID(modelID)
+                            }
+                        }
+                    )
+                ) {
                     Text("未選択").tag("")
                     ForEach(viewModel.summaryModelPickerIDs, id: \.self) { id in
                         Text(id).tag(id)
                     }
                 }
-                Picker("最大コンテキスト", selection: Binding(
-                    get: { viewModel.summaryContextLength },
-                    set: { new in Task { await viewModel.setSummaryContextLength(new) } }
-                )) {
-                    ForEach(Self.contextLengthPresets, id: \.value) { preset in
-                        Text(preset.label).tag(preset.value)
-                    }
-                }
+                Text("長い文字起こしは自動的に分割・統合して要約します。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+@MainActor
+private struct GeneralSettingsTab: View {
+    @EnvironmentObject private var checkForUpdatesViewModel: CheckForUpdatesViewModel
+    @ObservedObject var viewModel: SettingsViewModel
+
+    var body: some View {
+        Form {
             Section("起動") {
-                Toggle("ログイン時に起動", isOn: Binding(
-                    get: { viewModel.launchAtLogin },
-                    set: { new in Task { await viewModel.setLaunchAtLogin(new) } }
-                ))
+                Toggle(
+                    "ログイン時に起動",
+                    isOn: Binding(
+                        get: { viewModel.launchAtLogin },
+                        set: { shouldLaunchAtLogin in
+                            Task {
+                                await viewModel.setLaunchAtLogin(
+                                    shouldLaunchAtLogin
+                                )
+                            }
+                        }
+                    )
+                )
             }
+
             Section("アップデート") {
-                Toggle("自動的にアップデートを確認", isOn: $checkForUpdatesViewModel.automaticallyChecksForUpdates)
+                Toggle(
+                    "自動的にアップデートを確認",
+                    isOn: $checkForUpdatesViewModel.automaticallyChecksForUpdates
+                )
                 Button("アップデートを確認…") {
                     checkForUpdatesViewModel.checkForUpdates()
                 }
                 .disabled(!checkForUpdatesViewModel.canCheckForUpdates)
             }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+@MainActor
+private struct InformationSettingsTab: View {
+    var body: some View {
+        Form {
             Section("診断ログ") {
                 Text("録画や文字起こしが失敗したときの調査情報を、このMac内だけに保存します。会議の内容は記録しません。")
                     .font(.caption)
@@ -133,53 +248,12 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(minWidth: 400, minHeight: 440)
-        .task {
-            await viewModel.load()
-            if await settings.hasSeenFirstLaunchGuidance,
-               await viewModel.shouldShowWhisperModelDownloadSheet() {
-                viewModel.showWhisperModelDownloadSheet = true
-            }
-        }
-        .onChange(of: triggerWhisperSheetAfterGuidance) { _, newValue in
-            guard newValue else { return }
-            Task {
-                await viewModel.load()
-                if await viewModel.shouldShowWhisperModelDownloadSheet() {
-                    viewModel.showWhisperModelDownloadSheet = true
-                }
-                triggerWhisperSheetAfterGuidance = false
-            }
-        }
-        .sheet(isPresented: $viewModel.showWhisperModelDownloadSheet) {
-            WhisperModelDownloadView(
-                onComplete: { modelID in
-                    Task {
-                        await viewModel.setSelectedWhisperModelID(modelID)
-                        await viewModel.load()
-                    }
-                },
-                store: WhisperModelStore.shared,
-                downloader: whisperDownloader
-            )
-        }
     }
 
     private var appVersion: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "-"
         return "\(version) (\(build))"
-    }
-
-    private func openOutputFolderPicker() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            Task { await viewModel.setOutputDirectory(url) }
-        }
     }
 
     private func openDiagnosticLog() {
@@ -194,6 +268,6 @@ struct SettingsView: View {
 }
 
 #Preview {
-    SettingsView(triggerWhisperSheetAfterGuidance: .constant(false))
+    SettingsView()
         .frame(width: 450, height: 400)
 }

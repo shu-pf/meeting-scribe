@@ -18,7 +18,7 @@ struct FirstLaunchTriggerView: View {
             .task {
                 if await !settings.hasSeenFirstLaunchGuidance {
                     NSApp.activate(ignoringOtherApps: true)
-                    openWindow(id: "settings", value: "main")
+                    openWindow(id: "settings")
                 }
             }
     }

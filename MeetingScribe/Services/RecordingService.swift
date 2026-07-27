@@ -38,6 +38,7 @@ protocol RecordingServiceProtocol: Sendable {
         displayID: UInt32?,
         windowID: UInt32?,
         outputURL: URL,
+        includeMicrophone: Bool,
         onStreamStoppedUnexpectedly: (@Sendable (Result<URL, Error>) -> Void)?,
         onMaximumDurationReached: (@Sendable () -> Void)?
     ) async throws
@@ -423,12 +424,15 @@ final class RecordingService: RecordingServiceProtocol {
         displayID: UInt32?,
         windowID: UInt32?,
         outputURL: URL,
+        includeMicrophone: Bool,
         onStreamStoppedUnexpectedly: (@Sendable (Result<URL, Error>) -> Void)? = nil,
         onMaximumDurationReached: (@Sendable () -> Void)? = nil
     ) async throws {
         guard !_isRecording else { return }
-        guard await requestMicrophoneAccess() else {
-            throw RecordingError.microphonePermissionDenied
+        if includeMicrophone {
+            guard await requestMicrophoneAccess() else {
+                throw RecordingError.microphonePermissionDenied
+            }
         }
         self.onStreamStoppedUnexpectedly = onStreamStoppedUnexpectedly
         self.onMaximumDurationReached = onMaximumDurationReached
@@ -496,7 +500,7 @@ final class RecordingService: RecordingServiceProtocol {
         config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
         config.queueDepth = 5
         config.capturesAudio = true
-        config.captureMicrophone = true
+        config.captureMicrophone = includeMicrophone
         config.excludesCurrentProcessAudio = true
         // ウィンドウ録画時はアスペクト比維持をオフにし、余白（黒塗り）を防ぐ
         if windowID != nil {
@@ -531,7 +535,7 @@ final class RecordingService: RecordingServiceProtocol {
             assetWriter: writer,
             videoInput: input,
             queue: videoQueue,
-            expectsMicrophone: true
+            expectsMicrophone: includeMicrophone
         )
 
         let delegate = RecordingStreamDelegate()
@@ -543,7 +547,13 @@ final class RecordingService: RecordingServiceProtocol {
         let scStream = SCStream(filter: filter, configuration: config, delegate: delegate)
         try scStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: videoQueue)
         try scStream.addStreamOutput(output, type: .audio, sampleHandlerQueue: videoQueue)
-        try scStream.addStreamOutput(output, type: .microphone, sampleHandlerQueue: videoQueue)
+        if includeMicrophone {
+            try scStream.addStreamOutput(
+                output,
+                type: .microphone,
+                sampleHandlerQueue: videoQueue
+            )
+        }
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             scStream.startCapture(completionHandler: { error in
                 if let error {
@@ -563,7 +573,7 @@ final class RecordingService: RecordingServiceProtocol {
         currentOutputURL = outputURL
         _isRecording = true
         recordingLog.info(
-            "録画開始成功 mode=\(windowID == nil ? "display" : "window") width=\(width) height=\(height)"
+            "録画開始成功 mode=\(windowID == nil ? "display" : "window") width=\(width) height=\(height) includeMicrophone=\(includeMicrophone)"
         )
         maximumDurationTask = Task { [weak self, maximumRecordingDuration] in
             do {

@@ -97,10 +97,15 @@ final class MenuBarViewModel: ObservableObject {
     @Published var isOutputDirectorySet = false
     /// 選択済みWhisperモデルの実ファイルが利用可能か
     @Published private(set) var isWhisperModelReady = false
+    /// 要約モデルが選択済みか
+    @Published private(set) var isSummaryModelSet = false
+    @Published var isShowingMicrophoneChoice = false
+    @Published private(set) var isPreparingRecording = false
 
     private let recording: RecordingServiceProtocol
     private let settings: SettingsServiceProtocol
     private let pipeline: RecordingPipelineProtocol
+    private let pipelineJobStore: PipelineJobStore
     private let whisperModelStore: WhisperModelStoreProtocol
     private let diagnosticLog = DiagnosticLogger(category: "MenuBar")
     private static let historyDateFormatter: DateFormatter = {
@@ -115,6 +120,10 @@ final class MenuBarViewModel: ObservableObject {
     private var recordingSecurityScopedDirectory: URL?
     /// 録画完了後に作業領域から移動する最終保存先
     private var recordingDestinationURL: URL?
+    private var persistedPipelineJobs: [UUID: PersistedPipelineJob] = [:]
+    private var pipelineTasks: [UUID: Task<Void, Never>] = [:]
+    private var hasRestoredPipelineJobs = false
+    private var isPipelinePausedForSleep = false
     var activePipelineJobCount: Int {
         pipelineJobs.count { job in
             switch job.status {
@@ -131,36 +140,80 @@ final class MenuBarViewModel: ObservableObject {
     }
 
     var canStartRecording: Bool {
-        isOutputDirectorySet && isWhisperModelReady
+        isOutputDirectorySet
+            && isWhisperModelReady
+            && isSummaryModelSet
+            && !isPreparingRecording
     }
 
     init(
         recording: RecordingServiceProtocol? = nil,
         settings: SettingsServiceProtocol? = nil,
         pipeline: RecordingPipelineProtocol? = nil,
-        whisperModelStore: WhisperModelStoreProtocol? = nil
+        whisperModelStore: WhisperModelStoreProtocol? = nil,
+        pipelineJobStore: PipelineJobStore? = nil
     ) {
         let settingsInstance = settings ?? SettingsService()
         self.recording = recording ?? RecordingService()
         self.settings = settingsInstance
         self.whisperModelStore = whisperModelStore ?? WhisperModelStore.shared
+        self.pipelineJobStore = pipelineJobStore ?? PipelineJobStore()
         self.pipeline = pipeline ?? RecordingPipeline(
             transcription: TranscriptionService(),
-            summary: SummaryService(),
-            settings: settingsInstance
+            summary: SummaryService()
         )
     }
 
     func startRecording() {
-        diagnosticLog.info(
-            "録画開始操作 displayID=\(String(describing: selectedDisplayID)) windowID=\(String(describing: selectedWindowID))"
-        )
+        guard !isRecording, !isPreparingRecording else { return }
+        isPreparingRecording = true
         Task {
-            do {
+            let preference = await settings.microphoneRecordingPreference
+            switch preference {
+            case .askEveryTime:
+                isPreparingRecording = false
+                isShowingMicrophoneChoice = true
+            case .alwaysInclude:
+                await startRecording(includeMicrophone: true)
+            case .neverInclude:
+                await startRecording(includeMicrophone: false)
+            }
+        }
+    }
+
+    func confirmRecordingStart(includeMicrophone: Bool) {
+        isShowingMicrophoneChoice = false
+        guard !isRecording, !isPreparingRecording else { return }
+        isPreparingRecording = true
+        Task {
+            await startRecording(includeMicrophone: includeMicrophone)
+        }
+    }
+
+    func cancelRecordingStart() {
+        isShowingMicrophoneChoice = false
+    }
+
+    private func startRecording(includeMicrophone: Bool) async {
+        defer {
+            if !isRecording {
+                isPreparingRecording = false
+            }
+        }
+        diagnosticLog.info(
+            "録画開始操作 displayID=\(String(describing: selectedDisplayID)) windowID=\(String(describing: selectedWindowID)) includeMicrophone=\(includeMicrophone)"
+        )
+        do {
                 await refreshWhisperModelAvailability()
                 guard isWhisperModelReady else {
                     errorMessage = "文字起こしモデルをダウンロードしてください。"
                     diagnosticLog.warning("録画開始を中断: 文字起こしモデル未設定")
+                    return
+                }
+                await refreshSummaryModelSelection()
+                guard isSummaryModelSet else {
+                    errorMessage = "要約モデルを設定してください。"
+                    diagnosticLog.warning("録画開始を中断: 要約モデル未設定")
                     return
                 }
                 guard let settingsDir = await settings.outputDirectoryURL else {
@@ -184,6 +237,7 @@ final class MenuBarViewModel: ObservableObject {
                     displayID: selectedDisplayID,
                     windowID: selectedWindowID,
                     outputURL: stagingURL,
+                    includeMicrophone: includeMicrophone,
                     onStreamStoppedUnexpectedly: { [weak self] result in
                         guard let self else { return }
                         Task { @MainActor in
@@ -198,6 +252,7 @@ final class MenuBarViewModel: ObservableObject {
                     }
                 )
                 isRecording = true
+                isPreparingRecording = false
                 errorMessage = nil
                 diagnosticLog.info(
                     "録画中状態へ遷移 stagingURL=\(stagingURL.path) destinationURL=\(destinationURL.path)"
@@ -208,7 +263,6 @@ final class MenuBarViewModel: ObservableObject {
                 errorMessage = error.localizedDescription
                 diagnosticLog.error("録画開始失敗 error=\(Self.describeError(error))")
             }
-        }
     }
 
     func stopRecording() {
@@ -363,44 +417,213 @@ final class MenuBarViewModel: ObservableObject {
 
     /// パイプライン処理をバックグラウンドで実行する。新しい録画の開始に影響されない独立した Task として動かす。
     private func runPipelineInBackground(fileURL: URL) {
-        let job = PipelineJob(id: UUID(), createdAt: Date(), status: .waiting)
+        let jobID = UUID()
+        let createdAt = Date()
+        let job = PipelineJob(id: jobID, createdAt: createdAt, status: .waiting)
         pipelineJobs.insert(job, at: 0)
         trimFinishedPipelineJobs()
         diagnosticLog.info("録画後パイプライン開始 fileURL=\(fileURL.path)")
-        Task { [pipeline, settings] in
-            // パイプライン専用にセキュリティスコープ付き URL を取得する
-            let scopedDir = await settings.outputDirectoryURL
-            if let dir = scopedDir {
-                _ = dir.startAccessingSecurityScopedResource()
-            }
-            defer {
-                scopedDir?.stopAccessingSecurityScopedResource()
-            }
+        let task = Task { [weak self] in
+            guard let self else { return }
             do {
-                let result = try await pipeline.processRecording(fileURL: fileURL) { [weak self] progress in
-                    await self?.updatePipelineJob(id: job.id, progress: progress)
+                guard let outputDirectory = await settings.outputDirectoryURL,
+                      let whisperModelID = await settings.selectedWhisperModelID,
+                      let summaryModelID = await settings.selectedSummaryModelID else {
+                    throw PipelineJobPreparationError.settingsUnavailable
                 }
-                self.updatePipelineJob(id: job.id, status: .completed(result.meetingTitle))
-                self.diagnosticLog.info(
-                    "録画後パイプライン完了 title=\(result.meetingTitle)"
+                let recordingDate =
+                    (try? FileManager.default.attributesOfItem(
+                        atPath: fileURL.path
+                    )[.creationDate] as? Date) ?? createdAt
+                let bookmark = try? outputDirectory.bookmarkData(
+                    options: .withSecurityScope,
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
                 )
-                self.loadRecordingHistory()
-                self.sendCompletionNotification(title: result.meetingTitle)
+                let persistedJob = PersistedPipelineJob(
+                    id: jobID,
+                    createdAt: createdAt,
+                    recordingDate: recordingDate,
+                    recordingPath: fileURL.path,
+                    outputDirectoryPath: outputDirectory.path,
+                    outputDirectoryBookmark: bookmark,
+                    whisperModelID: whisperModelID,
+                    summaryModelID: summaryModelID,
+                    state: .waiting,
+                    detail: nil
+                )
+                persistedPipelineJobs[jobID] = persistedJob
+                try await pipelineJobStore.upsert(persistedJob)
+                await executePipelineJob(persistedJob)
             } catch {
-                self.updatePipelineJob(id: job.id, status: .failed(error.localizedDescription))
-                self.diagnosticLog.error(
+                updatePipelineJob(
+                    id: jobID,
+                    status: .failed(error.localizedDescription)
+                )
+                diagnosticLog.error(
+                    "録画後パイプライン準備失敗 error=\(Self.describeError(error))"
+                )
+            }
+            pipelineTasks[jobID] = nil
+        }
+        pipelineTasks[jobID] = task
+    }
+
+    /// 永続化された未完了ジョブを起動時に復元する。
+    func restorePipelineJobsIfNeeded() {
+        guard !hasRestoredPipelineJobs else { return }
+        hasRestoredPipelineJobs = true
+        Task {
+            do {
+                var restored = try await pipelineJobStore.loadAll()
+                for index in restored.indices where restored[index].state.isActive {
+                    restored[index].state = .waiting
+                    restored[index].detail = nil
+                    try await pipelineJobStore.upsert(restored[index])
+                }
+                persistedPipelineJobs = Dictionary(
+                    uniqueKeysWithValues: restored.map { ($0.id, $0) }
+                )
+                pipelineJobs = restored.map(Self.makePipelineJob)
+                trimFinishedPipelineJobs()
+                for job in restored where job.state == .waiting {
+                    startPersistedPipelineJob(job)
+                }
+                diagnosticLog.info(
+                    "永続化された録画後ジョブを復元 count=\(restored.count)"
+                )
+            } catch {
+                diagnosticLog.error(
+                    "録画後ジョブの復元失敗 error=\(Self.describeError(error))"
+                )
+            }
+        }
+    }
+
+    /// 蓋を閉じる前に外部プロセスと通信を止め、永続キューを再開待ちへ戻す。
+    func pausePipelineJobsForSystemSleep() {
+        guard !isPipelinePausedForSleep else { return }
+        isPipelinePausedForSleep = true
+        diagnosticLog.info("システムスリープに備えて録画後処理を一時停止")
+        for (id, task) in pipelineTasks {
+            task.cancel()
+            markPipelineJobWaiting(id: id)
+        }
+    }
+
+    /// 復帰時にキャンセル完了を待ってから、未完了ジョブを重複なく再開する。
+    func resumePipelineJobsAfterSystemWake() {
+        guard isPipelinePausedForSleep else { return }
+        Task {
+            let tasks = Array(pipelineTasks.values)
+            for task in tasks {
+                await task.value
+            }
+            pipelineTasks.removeAll()
+            isPipelinePausedForSleep = false
+            let waitingJobs = persistedPipelineJobs.values
+                .filter { $0.state == .waiting }
+                .sorted { $0.createdAt < $1.createdAt }
+            for job in waitingJobs {
+                startPersistedPipelineJob(job)
+            }
+            diagnosticLog.info(
+                "システム復帰後に録画後処理を再開 count=\(waitingJobs.count)"
+            )
+        }
+    }
+
+    private func startPersistedPipelineJob(_ job: PersistedPipelineJob) {
+        guard !isPipelinePausedForSleep, pipelineTasks[job.id] == nil else {
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await executePipelineJob(job)
+            pipelineTasks[job.id] = nil
+        }
+        pipelineTasks[job.id] = task
+    }
+
+    private func executePipelineJob(_ job: PersistedPipelineJob) async {
+        let outputDirectory = job.resolveOutputDirectoryURL()
+        let isAccessing = outputDirectory.startAccessingSecurityScopedResource()
+        defer {
+            if isAccessing {
+                outputDirectory.stopAccessingSecurityScopedResource()
+            }
+        }
+        do {
+            let request = PipelineRequest(
+                id: job.id,
+                fileURL: job.recordingURL,
+                outputDirectoryURL: outputDirectory,
+                recordingDate: job.recordingDate,
+                whisperModelID: job.whisperModelID,
+                summaryModelID: job.summaryModelID
+            )
+            let result = try await pipeline.processRecording(
+                request: request
+            ) { [weak self] progress in
+                await self?.updatePipelineJob(id: job.id, progress: progress)
+            }
+            await updatePersistedPipelineJob(
+                id: job.id,
+                state: .completed,
+                detail: result.meetingTitle
+            )
+            updatePipelineJob(
+                id: job.id,
+                status: .completed(result.meetingTitle)
+            )
+            await pipelineJobStore.removeWorkDirectory(for: job.id)
+            try? await pipelineJobStore.trimFinishedJobs(keeping: 5)
+            diagnosticLog.info(
+                "録画後パイプライン完了 title=\(result.meetingTitle)"
+            )
+            loadRecordingHistory()
+            sendCompletionNotification(title: result.meetingTitle)
+        } catch {
+            if Task.isCancelled {
+                await updatePersistedPipelineJob(
+                    id: job.id,
+                    state: .waiting,
+                    detail: nil
+                )
+                updatePipelineJob(id: job.id, status: .waiting)
+                diagnosticLog.info("録画後パイプラインを再開待ちに変更")
+            } else {
+                await updatePersistedPipelineJob(
+                    id: job.id,
+                    state: .failed,
+                    detail: error.localizedDescription
+                )
+                updatePipelineJob(
+                    id: job.id,
+                    status: .failed(error.localizedDescription)
+                )
+                diagnosticLog.error(
                     "録画後パイプライン失敗 error=\(Self.describeError(error))"
                 )
             }
         }
     }
 
-    private func updatePipelineJob(id: PipelineJob.ID, progress: PipelineProgress) {
+    private func updatePipelineJob(
+        id: PipelineJob.ID,
+        progress: PipelineProgress
+    ) async {
         let status: PipelineJobStatus = switch progress {
         case .transcribing: .transcribing
         case .summarizing: .summarizing
         case .saving: .saving
         }
+        let state: PersistedPipelineJobState = switch progress {
+        case .transcribing: .transcribing
+        case .summarizing: .summarizing
+        case .saving: .saving
+        }
+        await updatePersistedPipelineJob(id: id, state: state, detail: nil)
         updatePipelineJob(id: id, status: status)
     }
 
@@ -408,6 +631,53 @@ final class MenuBarViewModel: ObservableObject {
         guard let index = pipelineJobs.firstIndex(where: { $0.id == id }) else { return }
         pipelineJobs[index].status = status
         trimFinishedPipelineJobs()
+    }
+
+    private func markPipelineJobWaiting(id: UUID) {
+        guard var job = persistedPipelineJobs[id] else { return }
+        job.state = .waiting
+        job.detail = nil
+        persistedPipelineJobs[id] = job
+        updatePipelineJob(id: id, status: .waiting)
+        Task {
+            try? await pipelineJobStore.upsert(job)
+        }
+    }
+
+    private func updatePersistedPipelineJob(
+        id: UUID,
+        state: PersistedPipelineJobState,
+        detail: String?
+    ) async {
+        guard var job = persistedPipelineJobs[id] else { return }
+        job.state = state
+        job.detail = detail
+        persistedPipelineJobs[id] = job
+        try? await pipelineJobStore.upsert(job)
+    }
+
+    private static func makePipelineJob(
+        _ persisted: PersistedPipelineJob
+    ) -> PipelineJob {
+        let status: PipelineJobStatus = switch persisted.state {
+        case .waiting:
+            .waiting
+        case .transcribing:
+            .transcribing
+        case .summarizing:
+            .summarizing
+        case .saving:
+            .saving
+        case .completed:
+            .completed(persisted.detail ?? "無題")
+        case .failed:
+            .failed(persisted.detail ?? "不明なエラー")
+        }
+        return PipelineJob(
+            id: persisted.id,
+            createdAt: persisted.createdAt,
+            status: status
+        )
     }
 
     /// 実行中の項目は残し、完了・失敗した履歴は直近5件まで表示する。
@@ -438,6 +708,16 @@ final class MenuBarViewModel: ObservableObject {
         ) != nil
     }
 
+    private func refreshSummaryModelSelection() async {
+        guard let modelID = await settings.selectedSummaryModelID else {
+            isSummaryModelSet = false
+            return
+        }
+        isSummaryModelSet = !modelID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).isEmpty
+    }
+
     /// ステータスメニュー表示時に、録画対象のディスプレイ・ウィンドウ一覧を取得する
     func loadShareableContent() {
         Task {
@@ -445,6 +725,7 @@ final class MenuBarViewModel: ObservableObject {
             defer { isLoadingContent = false }
             isOutputDirectorySet = await settings.outputDirectoryURL != nil
             await refreshWhisperModelAvailability()
+            await refreshSummaryModelSelection()
             loadRecordingHistory()
 
             guard CGPreflightScreenCaptureAccess() else {
@@ -596,4 +877,12 @@ final class MenuBarViewModel: ObservableObject {
 
 private enum ShareableContentError: Error {
     case unavailable
+}
+
+private enum PipelineJobPreparationError: LocalizedError {
+    case settingsUnavailable
+
+    var errorDescription: String? {
+        "録画後処理に必要な保存先またはモデル設定を確認できませんでした。"
+    }
 }

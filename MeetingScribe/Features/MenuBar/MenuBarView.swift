@@ -46,9 +46,25 @@ struct MenuBarView: View {
                     Label("録画を終了", systemImage: "stop.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
+            } else if viewModel.isShowingMicrophoneChoice {
+                MicrophoneRecordingChoiceView(
+                    onInclude: {
+                        viewModel.confirmRecordingStart(includeMicrophone: true)
+                    },
+                    onExclude: {
+                        viewModel.confirmRecordingStart(includeMicrophone: false)
+                    },
+                    onCancel: viewModel.cancelRecordingStart
+                )
             } else {
                 Button(action: { viewModel.startRecording() }) {
-                    Label("録画を開始", systemImage: "record.circle")
+                    if viewModel.isPreparingRecording {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("録画を準備中")
+                    } else {
+                        Label("録画を開始", systemImage: "record.circle")
+                    }
                 }
                 .buttonStyle(.bordered)
                 .disabled(!viewModel.canStartRecording)
@@ -59,6 +75,16 @@ struct MenuBarView: View {
                 Label(
                     "文字起こしモデルをダウンロードしてください。",
                     systemImage: "arrow.down.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if !viewModel.isRecording, !viewModel.isSummaryModelSet {
+                Label(
+                    "要約モデルを設定してください。",
+                    systemImage: "text.badge.plus"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -117,7 +143,46 @@ struct MenuBarView: View {
     private func openSettings() {
         dismiss()
         NSApp.activate(ignoringOtherApps: true)
-        openWindow(id: "settings", value: "main")
+        openWindow(id: "settings")
+    }
+}
+
+private struct MicrophoneRecordingChoiceView: View {
+    let onInclude: () -> Void
+    let onExclude: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(
+                "自分の声を録音に含めますか？",
+                systemImage: "mic.circle"
+            )
+            .font(.headline)
+
+            Text(
+                "Teamsなどでミュート中でも、「含める」を選ぶと"
+                    + "Macのマイク音声は録音されます。"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Button("自分の声を含めて録画", action: onInclude)
+                .buttonStyle(.borderedProminent)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button("自分の声を含めずに録画", action: onExclude)
+                .buttonStyle(.bordered)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button("キャンセル", role: .cancel, action: onCancel)
+                .buttonStyle(.plain)
+        }
+        .padding(12)
+        .background(.quaternary, in: .rect(cornerRadius: 10))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("録画するマイク音声の確認")
     }
 }
 
@@ -302,7 +367,7 @@ private struct PipelineJobRow: View {
     private var statusText: String {
         switch job.status {
         case .waiting:
-            "待機中"
+            "待機中（スリープ・再起動後は自動再開）"
         case .transcribing:
             "文字起こし中"
         case .summarizing:

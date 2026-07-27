@@ -5,6 +5,36 @@
 
 import Foundation
 
+enum MicrophoneRecordingPreference: String, CaseIterable, Identifiable, Sendable {
+    case askEveryTime
+    case alwaysInclude
+    case neverInclude
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .askEveryTime:
+            "録画開始前に毎回確認"
+        case .alwaysInclude:
+            "常に自分の声を含める"
+        case .neverInclude:
+            "常に自分の声を含めない"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .askEveryTime:
+            "録画を開始するたびに、マイク音声を含めるか確認します。"
+        case .alwaysInclude:
+            "Teamsなどのミュート状態に関係なく、Macのマイク音声を録音します。"
+        case .neverInclude:
+            "システム音声だけを録音し、Macのマイクは使用しません。"
+        }
+    }
+}
+
 protocol SettingsServiceProtocol: Sendable {
     var outputDirectoryURL: URL? { get async }
     func setOutputDirectory(_ url: URL?) async
@@ -16,8 +46,12 @@ protocol SettingsServiceProtocol: Sendable {
     func setLaunchAtLogin(_ enabled: Bool) async
     var hasSeenFirstLaunchGuidance: Bool { get async }
     func setHasSeenFirstLaunchGuidance(_ value: Bool) async
-    var summaryContextLength: Int { get async }
-    func setSummaryContextLength(_ value: Int) async
+    var initialSetupStepRawValue: Int { get async }
+    func setInitialSetupStepRawValue(_ value: Int) async
+    var microphoneRecordingPreference: MicrophoneRecordingPreference { get async }
+    func setMicrophoneRecordingPreference(
+        _ preference: MicrophoneRecordingPreference
+    ) async
 }
 
 final class SettingsService: SettingsServiceProtocol {
@@ -30,10 +64,9 @@ final class SettingsService: SettingsServiceProtocol {
         static let selectedSummaryModelID = "selectedSummaryModelID"
         static let launchAtLogin = "launchAtLogin"
         static let hasSeenFirstLaunchGuidance = "hasSeenFirstLaunchGuidance"
-        static let summaryContextLength = "summaryContextLength"
+        static let initialSetupStepRawValue = "initialSetupStepRawValue"
+        static let microphoneRecordingPreference = "microphoneRecordingPreference"
     }
-
-    private static let defaultSummaryContextLength = 131_072
 
     var outputDirectoryURL: URL? {
         get async {
@@ -114,17 +147,32 @@ final class SettingsService: SettingsServiceProtocol {
         defaults.set(value, forKey: Keys.hasSeenFirstLaunchGuidance)
     }
 
-    var summaryContextLength: Int {
+    var initialSetupStepRawValue: Int {
+        get async { defaults.integer(forKey: Keys.initialSetupStepRawValue) }
+    }
+
+    func setInitialSetupStepRawValue(_ value: Int) async {
+        defaults.set(value, forKey: Keys.initialSetupStepRawValue)
+    }
+
+    var microphoneRecordingPreference: MicrophoneRecordingPreference {
         get async {
-            let key = Keys.summaryContextLength
-            guard defaults.object(forKey: key) != nil else {
-                return Self.defaultSummaryContextLength
+            guard let rawValue = defaults.string(
+                forKey: Keys.microphoneRecordingPreference
+            ) else {
+                return .askEveryTime
             }
-            return defaults.integer(forKey: key)
+            return MicrophoneRecordingPreference(rawValue: rawValue)
+                ?? .askEveryTime
         }
     }
 
-    func setSummaryContextLength(_ value: Int) async {
-        defaults.set(value, forKey: Keys.summaryContextLength)
+    func setMicrophoneRecordingPreference(
+        _ preference: MicrophoneRecordingPreference
+    ) async {
+        defaults.set(
+            preference.rawValue,
+            forKey: Keys.microphoneRecordingPreference
+        )
     }
 }
