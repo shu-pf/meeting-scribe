@@ -51,8 +51,18 @@ struct MenuBarView: View {
                     Label("録画を開始", systemImage: "record.circle")
                 }
                 .buttonStyle(.bordered)
-                .disabled(!viewModel.isOutputDirectorySet)
-                .opacity(viewModel.isOutputDirectorySet ? 1 : 0.6)
+                .disabled(!viewModel.canStartRecording)
+                .opacity(viewModel.canStartRecording ? 1 : 0.6)
+            }
+
+            if !viewModel.isRecording, !viewModel.isWhisperModelReady {
+                Label(
+                    "文字起こしモデルをダウンロードしてください。",
+                    systemImage: "arrow.down.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if !viewModel.isRecording, !viewModel.isOutputDirectorySet {

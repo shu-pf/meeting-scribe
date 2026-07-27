@@ -12,7 +12,8 @@ enum AudioExtractor {
     /// - Parameter outputDirectory: 出力先ディレクトリ。nil の場合は temporaryDirectory（サブプロセスから見えない場合あり）
     static func extractWAV(from videoURL: URL, outputDirectory: URL? = nil) async throws -> URL {
         let asset = AVURLAsset(url: videoURL)
-        guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        guard !audioTracks.isEmpty else {
             throw AudioExtractorError.noAudioTrack
         }
 
@@ -26,8 +27,21 @@ enum AudioExtractor {
             AVLinearPCMIsBigEndianKey: false,
             AVLinearPCMIsNonInterleaved: false,
         ]
-        let trackOutput = AVAssetReaderTrackOutput(track: track, outputSettings: outputSettings)
-        reader.add(trackOutput)
+        let readerOutput: AVAssetReaderOutput
+        if audioTracks.count == 1, let track = audioTracks.first {
+            readerOutput = AVAssetReaderTrackOutput(
+                track: track,
+                outputSettings: outputSettings
+            )
+        } else {
+            // システム音声とマイク音声を、文字起こし用の1本のモノラル音声へ合成する。
+            readerOutput = AVAssetReaderAudioMixOutput(
+                audioTracks: audioTracks,
+                audioSettings: outputSettings
+            )
+        }
+        readerOutput.alwaysCopiesSampleData = false
+        reader.add(readerOutput)
         reader.startReading()
 
         let tempDir: URL
@@ -54,7 +68,7 @@ enum AudioExtractor {
         // 5時間では約576MBになるため、PCM全体をメモリに保持せず逐次書き込む。
         try fileHandle.write(contentsOf: makeWAVHeader(dataSize: 0, sampleRate: 16000, channels: 1, bitsPerSample: 16))
         var dataSize: UInt64 = 0
-        while let sampleBuffer = trackOutput.copyNextSampleBuffer() {
+        while let sampleBuffer = readerOutput.copyNextSampleBuffer() {
             try Task.checkCancellation()
             guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { continue }
             let length = CMBlockBufferGetDataLength(blockBuffer)

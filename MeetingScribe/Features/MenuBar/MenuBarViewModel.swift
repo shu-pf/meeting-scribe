@@ -61,6 +61,26 @@ struct RecordingHistoryItem: Identifiable, Equatable {
     let hasSummary: Bool
 }
 
+private enum OutputDirectoryPreparationError: LocalizedError {
+    case pathIsNotDirectory(String)
+    case creationFailed(String, Error)
+    case destinationUnavailable
+    case finalizationFailed(String, String, Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .pathIsNotDirectory(let path):
+            "保存先がフォルダではありません: \(path)"
+        case .creationFailed(let path, let error):
+            "保存先フォルダを作成できませんでした: \(path)（\(error.localizedDescription)）"
+        case .destinationUnavailable:
+            "完成した録画の保存先を確認できませんでした。"
+        case .finalizationFailed(let source, let destination, let error):
+            "完成した録画を保存先へ移動できませんでした: \(source) → \(destination)（\(error.localizedDescription)）"
+        }
+    }
+}
+
 @MainActor
 final class MenuBarViewModel: ObservableObject {
     @Published var isRecording = false
@@ -75,10 +95,13 @@ final class MenuBarViewModel: ObservableObject {
     @Published private(set) var isLoadingRecordingHistory = false
     /// 出力フォルダが設定済みか（未設定の場合は録画開始不可）
     @Published var isOutputDirectorySet = false
+    /// 選択済みWhisperモデルの実ファイルが利用可能か
+    @Published private(set) var isWhisperModelReady = false
 
     private let recording: RecordingServiceProtocol
     private let settings: SettingsServiceProtocol
     private let pipeline: RecordingPipelineProtocol
+    private let whisperModelStore: WhisperModelStoreProtocol
     private let diagnosticLog = DiagnosticLogger(category: "MenuBar")
     private static let historyDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -90,6 +113,8 @@ final class MenuBarViewModel: ObservableObject {
     private static let recordingExtensions: Set<String> = ["mp4", "mov", "m4v"]
     /// 録画用のセキュリティスコープ付き出力フォルダ
     private var recordingSecurityScopedDirectory: URL?
+    /// 録画完了後に作業領域から移動する最終保存先
+    private var recordingDestinationURL: URL?
     var activePipelineJobCount: Int {
         pipelineJobs.count { job in
             switch job.status {
@@ -105,14 +130,20 @@ final class MenuBarViewModel: ObservableObject {
         pipelineJobs.count { $0.status == .waiting }
     }
 
+    var canStartRecording: Bool {
+        isOutputDirectorySet && isWhisperModelReady
+    }
+
     init(
         recording: RecordingServiceProtocol? = nil,
         settings: SettingsServiceProtocol? = nil,
-        pipeline: RecordingPipelineProtocol? = nil
+        pipeline: RecordingPipelineProtocol? = nil,
+        whisperModelStore: WhisperModelStoreProtocol? = nil
     ) {
         let settingsInstance = settings ?? SettingsService()
         self.recording = recording ?? RecordingService()
         self.settings = settingsInstance
+        self.whisperModelStore = whisperModelStore ?? WhisperModelStore.shared
         self.pipeline = pipeline ?? RecordingPipeline(
             transcription: TranscriptionService(),
             summary: SummaryService(),
@@ -126,20 +157,33 @@ final class MenuBarViewModel: ObservableObject {
         )
         Task {
             do {
+                await refreshWhisperModelAvailability()
+                guard isWhisperModelReady else {
+                    errorMessage = "文字起こしモデルをダウンロードしてください。"
+                    diagnosticLog.warning("録画開始を中断: 文字起こしモデル未設定")
+                    return
+                }
                 guard let settingsDir = await settings.outputDirectoryURL else {
                     diagnosticLog.error("録画開始失敗: 出力フォルダ未設定")
                     errorMessage = "出力フォルダが未設定です。設定から出力フォルダを選択してください。"
                     return
                 }
-                _ = settingsDir.startAccessingSecurityScopedResource()
-                recordingSecurityScopedDirectory = settingsDir
-                let outputDir = settingsDir
+                let isAccessing = settingsDir.startAccessingSecurityScopedResource()
+                if isAccessing {
+                    recordingSecurityScopedDirectory = settingsDir
+                }
+                try prepareOutputDirectory(settingsDir)
                 let name = "recording_\(ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")).mp4"
-                let outputURL = outputDir.appendingPathComponent(name)
+                let destinationURL = settingsDir.appendingPathComponent(name)
+                let stagingDirectory = try prepareRecordingStagingDirectory()
+                let stagingURL = stagingDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("partial.mp4")
+                recordingDestinationURL = destinationURL
                 try await recording.startRecording(
                     displayID: selectedDisplayID,
                     windowID: selectedWindowID,
-                    outputURL: outputURL,
+                    outputURL: stagingURL,
                     onStreamStoppedUnexpectedly: { [weak self] result in
                         guard let self else { return }
                         Task { @MainActor in
@@ -155,8 +199,11 @@ final class MenuBarViewModel: ObservableObject {
                 )
                 isRecording = true
                 errorMessage = nil
-                diagnosticLog.info("録画中状態へ遷移 outputURL=\(outputURL.path)")
+                diagnosticLog.info(
+                    "録画中状態へ遷移 stagingURL=\(stagingURL.path) destinationURL=\(destinationURL.path)"
+                )
             } catch {
+                recordingDestinationURL = nil
                 releaseRecordingSecurityScopedDirectory()
                 errorMessage = error.localizedDescription
                 diagnosticLog.error("録画開始失敗 error=\(Self.describeError(error))")
@@ -168,7 +215,8 @@ final class MenuBarViewModel: ObservableObject {
         diagnosticLog.info("録画停止操作")
         Task {
             do {
-                let fileURL = try await recording.stopRecording()
+                let stagingURL = try await recording.stopRecording()
+                let fileURL = try finalizeRecording(at: stagingURL)
                 isRecording = false
                 errorMessage = nil
                 // 録画用のセキュリティスコープを解放し、パイプライン専用に新たに取得する
@@ -176,6 +224,8 @@ final class MenuBarViewModel: ObservableObject {
                 runPipelineInBackground(fileURL: fileURL)
                 diagnosticLog.info("録画停止成功 fileURL=\(fileURL.path)")
             } catch {
+                isRecording = false
+                recordingDestinationURL = nil
                 errorMessage = error.localizedDescription
                 releaseRecordingSecurityScopedDirectory()
                 diagnosticLog.error("録画停止失敗 error=\(Self.describeError(error))")
@@ -183,16 +233,95 @@ final class MenuBarViewModel: ObservableObject {
         }
     }
 
+    private func prepareOutputDirectory(_ directory: URL) throws {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(
+            atPath: directory.path,
+            isDirectory: &isDirectory
+        ) {
+            guard isDirectory.boolValue else {
+                throw OutputDirectoryPreparationError.pathIsNotDirectory(directory.path)
+            }
+            return
+        }
+
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            diagnosticLog.info("存在しない出力フォルダを作成 path=\(directory.path)")
+        } catch {
+            throw OutputDirectoryPreparationError.creationFailed(directory.path, error)
+        }
+    }
+
+    private func prepareRecordingStagingDirectory() throws -> URL {
+        guard let applicationSupportDirectory = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw OutputDirectoryPreparationError.destinationUnavailable
+        }
+        let stagingDirectory = applicationSupportDirectory
+            .appendingPathComponent("MeetingScribe", isDirectory: true)
+            .appendingPathComponent("InProgress", isDirectory: true)
+        try prepareOutputDirectory(stagingDirectory)
+        return stagingDirectory
+    }
+
+    private func finalizeRecording(at stagingURL: URL) throws -> URL {
+        guard let destinationURL = recordingDestinationURL else {
+            throw OutputDirectoryPreparationError.destinationUnavailable
+        }
+        defer { recordingDestinationURL = nil }
+
+        try prepareOutputDirectory(destinationURL.deletingLastPathComponent())
+        do {
+            try FileManager.default.moveItem(
+                at: stagingURL,
+                to: destinationURL
+            )
+            // 空なら隠し作業フォルダも片付ける。クラッシュ時の未完了ファイルが
+            // 残っている場合は削除に失敗するため、そのまま保全される。
+            try? FileManager.default.removeItem(
+                at: stagingURL.deletingLastPathComponent()
+            )
+            diagnosticLog.info(
+                "完成した録画を保存先へ移動 source=\(stagingURL.path) destination=\(destinationURL.path)"
+            )
+            return destinationURL
+        } catch {
+            throw OutputDirectoryPreparationError.finalizationFailed(
+                stagingURL.path,
+                destinationURL.path,
+                error
+            )
+        }
+    }
+
     /// ストリームが予期せず停止したとき（例: 録画元ウィンドウが閉じられたとき）にコールバックから呼ばれる。録画終了と同様にパイプラインを実行する。
     private func handleStreamStoppedUnexpectedly(result: Result<URL, Error>) {
         isRecording = false
-        releaseRecordingSecurityScopedDirectory()
+        defer { releaseRecordingSecurityScopedDirectory() }
         switch result {
-        case .success(let fileURL):
-            errorMessage = nil
-            diagnosticLog.warning("録画ストリームが予期せず停止 fileURL=\(fileURL.path)")
-            runPipelineInBackground(fileURL: fileURL)
+        case .success(let stagingURL):
+            do {
+                let fileURL = try finalizeRecording(at: stagingURL)
+                errorMessage = nil
+                diagnosticLog.warning(
+                    "録画ストリームが予期せず停止 fileURL=\(fileURL.path)"
+                )
+                runPipelineInBackground(fileURL: fileURL)
+            } catch {
+                recordingDestinationURL = nil
+                errorMessage = error.localizedDescription
+                diagnosticLog.error(
+                    "予期しない停止後の録画保存に失敗 error=\(Self.describeError(error))"
+                )
+            }
         case .failure(let error):
+            recordingDestinationURL = nil
             errorMessage = error.localizedDescription
             diagnosticLog.error(
                 "録画ストリームの予期しない停止処理に失敗 error=\(Self.describeError(error))"
@@ -298,12 +427,24 @@ final class MenuBarViewModel: ObservableObject {
         }
     }
 
+    private func refreshWhisperModelAvailability() async {
+        guard let modelID = await settings.selectedWhisperModelID,
+              !modelID.isEmpty else {
+            isWhisperModelReady = false
+            return
+        }
+        isWhisperModelReady = await whisperModelStore.localFileURL(
+            forModelID: modelID
+        ) != nil
+    }
+
     /// ステータスメニュー表示時に、録画対象のディスプレイ・ウィンドウ一覧を取得する
     func loadShareableContent() {
         Task {
             isLoadingContent = true
             defer { isLoadingContent = false }
             isOutputDirectorySet = await settings.outputDirectoryURL != nil
+            await refreshWhisperModelAvailability()
             loadRecordingHistory()
 
             guard CGPreflightScreenCaptureAccess() else {
@@ -379,6 +520,11 @@ final class MenuBarViewModel: ObservableObject {
                 if isAccessing {
                     outputDirectory.stopAccessingSecurityScopedResource()
                 }
+            }
+
+            guard FileManager.default.fileExists(atPath: outputDirectory.path) else {
+                recordingHistory = []
+                return
             }
 
             do {

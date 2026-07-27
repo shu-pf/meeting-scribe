@@ -52,6 +52,7 @@ enum RecordingError: Error, LocalizedError {
     case windowNotFound
     case streamStartFailed(Error)
     case writerFailed(Error)
+    case microphonePermissionDenied
     /// 1フレームもキャプチャされなかった（writer を start していないため finish できない）
     case noFramesCaptured
 
@@ -69,6 +70,8 @@ enum RecordingError: Error, LocalizedError {
             return "キャプチャの開始に失敗しました: \(error.localizedDescription)"
         case .writerFailed(let error):
             return "動画の書き込みに失敗しました: \(error.localizedDescription)"
+        case .microphonePermissionDenied:
+            return "自分の声を録音するにはマイクの許可が必要です。システム設定の「プライバシーとセキュリティ」→「マイク」でこのアプリを許可し、もう一度録画を開始してください。"
         case .noFramesCaptured:
             return "キャプチャされた映像がありません。権限や対象ウィンドウの状態を確認してください。"
         }
@@ -82,12 +85,24 @@ private struct BufferedVideoSample {
     let buffer: CMSampleBuffer
 }
 
+private enum RecordingAudioSource: String {
+    case system
+    case microphone
+}
+
+private struct BufferedAudioSample {
+    let buffer: CMSampleBuffer
+    let source: RecordingAudioSource
+}
+
 private final class RecordingStreamOutput: NSObject, SCStreamOutput {
     private let assetWriter: AVAssetWriter
     private let videoInput: AVAssetWriterInput
-    /// 最初の音声サンプルのフォーマットで遅延作成する（MOV では sourceFormatHint 必須のため）
-    private var _audioInput: AVAssetWriterInput?
+    /// 各トラックの最初のサンプルで遅延作成する（MOV では sourceFormatHint 必須のため）
+    private var systemAudioInput: AVAssetWriterInput?
+    private var microphoneAudioInput: AVAssetWriterInput?
     private let queue: DispatchQueue
+    private let expectsMicrophone: Bool
 
     private var firstSampleTime: CMTime = .zero
     private var lastSampleBuffer: CMSampleBuffer?
@@ -97,15 +112,23 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
 
     /// 音声入力未作成時に届いた映像をバッファ（音声到着でフォーマット確定後に開始）
     private var videoBuffer: [BufferedVideoSample] = []
+    private var audioBuffer: [BufferedAudioSample] = []
     private static let maxVideoBufferCount = 90  // 約1.5秒（60fps想定）で音声がなければ映像のみで開始
 
-    var audioInput: AVAssetWriterInput? { _audioInput }
+    var audioInputs: [AVAssetWriterInput] {
+        [systemAudioInput, microphoneAudioInput].compactMap { $0 }
+    }
 
-    init(assetWriter: AVAssetWriter, videoInput: AVAssetWriterInput, queue: DispatchQueue) {
+    init(
+        assetWriter: AVAssetWriter,
+        videoInput: AVAssetWriterInput,
+        queue: DispatchQueue,
+        expectsMicrophone: Bool
+    ) {
         self.assetWriter = assetWriter
         self.videoInput = videoInput
-        self._audioInput = nil
         self.queue = queue
+        self.expectsMicrophone = expectsMicrophone
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -123,7 +146,9 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
                 }
                 self.processVideoSample(sampleBuffer)
             case .audio:
-                self.processAudioSample(sampleBuffer)
+                self.processAudioSample(sampleBuffer, source: .system)
+            case .microphone:
+                self.processAudioSample(sampleBuffer, source: .microphone)
             default:
                 break
             }
@@ -133,36 +158,16 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
     private func processVideoSample(_ sampleBuffer: CMSampleBuffer) {
         sessionStartedLock.lock()
         if !sessionStarted {
-            if _audioInput == nil {
-                // 音声入力未作成：バッファする。いっぱいなら音声なしで開始
-                videoBuffer.append(BufferedVideoSample(buffer: sampleBuffer))
-                if videoBuffer.count >= Self.maxVideoBufferCount {
-                    self.firstSampleTime = videoBuffer[0].buffer.presentationTimeStamp
-                    assetWriter.startWriting()
-                    assetWriter.startSession(atSourceTime: .zero)
-                    sessionStarted = true
-                    recordingLog.info("映像のみでセッション開始（音声未到着タイムアウト） firstSampleTime=\(self.firstSampleTime.seconds)")
-                    let toFlush = videoBuffer
-                    videoBuffer = []
-                    sessionStartedLock.unlock()
-                    for b in toFlush { appendVideoSample(b.buffer) }
-                    appendVideoSample(sampleBuffer)
-                    return
-                }
+            videoBuffer.append(BufferedVideoSample(buffer: sampleBuffer))
+            let audioReady = systemAudioInput != nil
+                && (!expectsMicrophone || microphoneAudioInput != nil)
+            guard audioReady || videoBuffer.count >= Self.maxVideoBufferCount else {
                 sessionStartedLock.unlock()
                 return
             }
-            // 音声入力はあるがまだ開始していない（音声が先に来た後の最初の映像）
-            self.firstSampleTime = videoBuffer.first?.buffer.presentationTimeStamp ?? sampleBuffer.presentationTimeStamp
-            assetWriter.startWriting()
-            assetWriter.startSession(atSourceTime: .zero)
-            sessionStarted = true
-            recordingLog.info("映像でセッション開始 firstSampleTime=\(self.firstSampleTime.seconds)")
-            let toFlush = videoBuffer
-            videoBuffer = []
+            let (videos, audios) = startSessionLocked()
             sessionStartedLock.unlock()
-            for b in toFlush { appendVideoSample(b.buffer) }
-            appendVideoSample(sampleBuffer)
+            flushBufferedSamples(videos: videos, audios: audios)
             return
         }
         sessionStartedLock.unlock()
@@ -208,40 +213,56 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
         }
     }
 
-    private func processAudioSample(_ sampleBuffer: CMSampleBuffer) {
+    private func processAudioSample(
+        _ sampleBuffer: CMSampleBuffer,
+        source: RecordingAudioSource
+    ) {
         sessionStartedLock.lock()
-        if _audioInput == nil {
+        var audioInput = input(for: source)
+        if audioInput == nil {
+            guard !sessionStarted else {
+                sessionStartedLock.unlock()
+                recordingLog.warning("\(source.rawValue): Writer開始後に初回サンプルが届いたためスキップ")
+                return
+            }
             guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
                   let aacSettings = makeAACOutputSettings(from: formatDesc) else {
                 sessionStartedLock.unlock()
-                recordingLog.warning("音声: フォーマット取得または AAC 設定生成失敗のためスキップ")
+                recordingLog.warning("\(source.rawValue): フォーマット取得または AAC 設定生成失敗のためスキップ")
                 return
             }
             let audioIn = AVAssetWriterInput(mediaType: .audio, outputSettings: aacSettings, sourceFormatHint: formatDesc)
             audioIn.expectsMediaDataInRealTime = true
             assetWriter.add(audioIn)
-            _audioInput = audioIn
-            recordingLog.info("音声入力を作成して追加（AAC エンコード、ソースフォーマットから設定生成）")
-        }
-        let audioInput = _audioInput!
-        if !sessionStarted {
-            self.firstSampleTime = videoBuffer.first?.buffer.presentationTimeStamp ?? sampleBuffer.presentationTimeStamp
-            let audioPTS = sampleBuffer.presentationTimeStamp
-            if CMTimeCompare(audioPTS, self.firstSampleTime) < 0 {
-                self.firstSampleTime = audioPTS
-            }
-            assetWriter.startWriting()
-            assetWriter.startSession(atSourceTime: .zero)
-            sessionStarted = true
-            recordingLog.info("音声でセッション開始 firstSampleTime=\(self.firstSampleTime.seconds)")
-            let toFlush = videoBuffer
-            videoBuffer = []
-            sessionStartedLock.unlock()
-            for b in toFlush { appendVideoSample(b.buffer) }
-        } else {
-            sessionStartedLock.unlock()
+            setInput(audioIn, for: source)
+            audioInput = audioIn
+            recordingLog.info("\(source.rawValue): 音声入力を作成して追加")
         }
 
+        if !sessionStarted {
+            audioBuffer.append(BufferedAudioSample(buffer: sampleBuffer, source: source))
+            let audioReady = systemAudioInput != nil
+                && (!expectsMicrophone || microphoneAudioInput != nil)
+            guard audioReady, !videoBuffer.isEmpty else {
+                sessionStartedLock.unlock()
+                return
+            }
+            let (videos, audios) = startSessionLocked()
+            sessionStartedLock.unlock()
+            flushBufferedSamples(videos: videos, audios: audios)
+            return
+        }
+        sessionStartedLock.unlock()
+
+        guard let audioInput else { return }
+        appendAudioSample(sampleBuffer, to: audioInput, source: source)
+    }
+
+    private func appendAudioSample(
+        _ sampleBuffer: CMSampleBuffer,
+        to audioInput: AVAssetWriterInput,
+        source: RecordingAudioSource
+    ) {
         let pts = sampleBuffer.presentationTimeStamp - self.firstSampleTime
         let duration = sampleBuffer.duration
         let dts = sampleBuffer.decodeTimeStamp == .invalid ? pts : sampleBuffer.decodeTimeStamp - self.firstSampleTime
@@ -262,7 +283,7 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
         guard audioInput.isReadyForMoreMediaData else { return }
         let ok = audioInput.append(newBuffer)
         if !ok {
-            recordingLog.warning("音声: append が false を返した（書き込み失敗の可能性）")
+            recordingLog.warning("\(source.rawValue): append が false を返した（書き込み失敗の可能性）")
         }
         let endTime = pts + duration
         if CMTimeCompare(endTime, lastWrittenEndTime) > 0 {
@@ -270,12 +291,55 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
         }
     }
 
-    func endSession() {
-        sessionStartedLock.lock()
-        defer { sessionStartedLock.unlock() }
-        guard sessionStarted else { return }
-        let lastTime = lastSampleBuffer?.presentationTimeStamp ?? .zero
-        assetWriter.endSession(atSourceTime: lastTime)
+    private func input(for source: RecordingAudioSource) -> AVAssetWriterInput? {
+        switch source {
+        case .system:
+            systemAudioInput
+        case .microphone:
+            microphoneAudioInput
+        }
+    }
+
+    private func setInput(_ input: AVAssetWriterInput, for source: RecordingAudioSource) {
+        switch source {
+        case .system:
+            systemAudioInput = input
+        case .microphone:
+            microphoneAudioInput = input
+        }
+    }
+
+    /// sessionStartedLock を保持した状態で呼ぶ。
+    private func startSessionLocked() -> ([BufferedVideoSample], [BufferedAudioSample]) {
+        let sampleTimes = videoBuffer.map(\.buffer.presentationTimeStamp)
+            + audioBuffer.map(\.buffer.presentationTimeStamp)
+        firstSampleTime = sampleTimes.min {
+            CMTimeCompare($0, $1) < 0
+        } ?? .zero
+        assetWriter.startWriting()
+        assetWriter.startSession(atSourceTime: .zero)
+        sessionStarted = true
+        let videos = videoBuffer
+        let audios = audioBuffer
+        videoBuffer = []
+        audioBuffer = []
+        recordingLog.info(
+            "映像・音声セッション開始 firstSampleTime=\(self.firstSampleTime.seconds) audioTracks=\(self.audioInputs.count)"
+        )
+        return (videos, audios)
+    }
+
+    private func flushBufferedSamples(
+        videos: [BufferedVideoSample],
+        audios: [BufferedAudioSample]
+    ) {
+        for video in videos {
+            appendVideoSample(video.buffer)
+        }
+        for audio in audios {
+            guard let input = input(for: audio.source) else { continue }
+            appendAudioSample(audio.buffer, to: input, source: audio.source)
+        }
     }
 
     /// セッション終了に使う endTime と、セッションが開始されていたかを返す。
@@ -285,12 +349,14 @@ private final class RecordingStreamOutput: NSObject, SCStreamOutput {
         sessionStartedLock.lock()
         defer { sessionStartedLock.unlock() }
         guard sessionStarted else { return (false, .zero) }
-        let lastPTS = lastSampleBuffer?.presentationTimeStamp ?? .zero
+        let lastVideoPTS = lastSampleBuffer?.presentationTimeStamp ?? .zero
         let endTime: CMTime
-        if lastPTS.isValid, CMTimeCompare(lastPTS, .zero) >= 0, lastPTS.timescale > 0 {
-            endTime = lastPTS
-        } else if CMTimeCompare(lastWrittenEndTime, .zero) > 0, lastWrittenEndTime.isValid, lastWrittenEndTime.timescale > 0 {
+        if lastWrittenEndTime.isValid,
+           lastWrittenEndTime.timescale > 0,
+           CMTimeCompare(lastWrittenEndTime, lastVideoPTS) >= 0 {
             endTime = lastWrittenEndTime
+        } else if lastVideoPTS.isValid, lastVideoPTS.timescale > 0 {
+            endTime = lastVideoPTS
         } else {
             endTime = CMTime(value: 1, timescale: 600)
         }
@@ -361,6 +427,9 @@ final class RecordingService: RecordingServiceProtocol {
         onMaximumDurationReached: (@Sendable () -> Void)? = nil
     ) async throws {
         guard !_isRecording else { return }
+        guard await requestMicrophoneAccess() else {
+            throw RecordingError.microphonePermissionDenied
+        }
         self.onStreamStoppedUnexpectedly = onStreamStoppedUnexpectedly
         self.onMaximumDurationReached = onMaximumDurationReached
         recordingLog.info(
@@ -427,6 +496,7 @@ final class RecordingService: RecordingServiceProtocol {
         config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
         config.queueDepth = 5
         config.capturesAudio = true
+        config.captureMicrophone = true
         config.excludesCurrentProcessAudio = true
         // ウィンドウ録画時はアスペクト比維持をオフにし、余白（黒塗り）を防ぐ
         if windowID != nil {
@@ -460,7 +530,8 @@ final class RecordingService: RecordingServiceProtocol {
         let output = RecordingStreamOutput(
             assetWriter: writer,
             videoInput: input,
-            queue: videoQueue
+            queue: videoQueue,
+            expectsMicrophone: true
         )
 
         let delegate = RecordingStreamDelegate()
@@ -472,6 +543,7 @@ final class RecordingService: RecordingServiceProtocol {
         let scStream = SCStream(filter: filter, configuration: config, delegate: delegate)
         try scStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: videoQueue)
         try scStream.addStreamOutput(output, type: .audio, sampleHandlerQueue: videoQueue)
+        try scStream.addStreamOutput(output, type: .microphone, sampleHandlerQueue: videoQueue)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             scStream.startCapture(completionHandler: { error in
                 if let error {
@@ -626,7 +698,7 @@ final class RecordingService: RecordingServiceProtocol {
             }
             ctx.writer.endSession(atSourceTime: endTime)
             ctx.input.markAsFinished()
-            ctx.output.audioInput?.markAsFinished()
+            ctx.output.audioInputs.forEach { $0.markAsFinished() }
             ctx.writer.finishWriting {
                 let status = ctx.writer.status
                 if status == .failed, let error = ctx.writer.error {
@@ -722,7 +794,7 @@ final class RecordingService: RecordingServiceProtocol {
                 recordingLog.info("stopRecording: endSession(atSourceTime: \(endTime.seconds)) → markAsFinished → finishWriting 開始")
                 ctx.writer.endSession(atSourceTime: endTime)
                 ctx.input.markAsFinished()
-                ctx.output.audioInput?.markAsFinished()
+                ctx.output.audioInputs.forEach { $0.markAsFinished() }
                 ctx.writer.finishWriting {
                     let status = ctx.writer.status
                     if status == .failed, let error = ctx.writer.error {
@@ -744,6 +816,23 @@ final class RecordingService: RecordingServiceProtocol {
             return "domain=\(ne.domain) code=\(ne.code) desc=\(ne.localizedDescription)"
         }
         return error.localizedDescription
+    }
+
+    private func requestMicrophoneAccess() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await withCheckedContinuation { continuation in
+                AVCaptureDevice.requestAccess(for: .audio) { granted in
+                    continuation.resume(returning: granted)
+                }
+            }
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
     }
 
     private func downsizedVideoSize(source: CGSize, scaleFactor: Int) -> (Int, Int) {

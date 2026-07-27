@@ -310,6 +310,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MeetingScribe/Info.plist;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "会議で自分の声も記録するために、マイクの音声を録音します。";
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "会議の画面と音声を録画するために、画面のキャプチャを行います。";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -365,6 +366,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MeetingScribe/Info.plist;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "会議で自分の声も記録するために、マイクの音声を録音します。";
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "会議の画面と音声を録画するために、画面のキャプチャを行います。";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;

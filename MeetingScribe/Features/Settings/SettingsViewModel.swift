@@ -68,9 +68,11 @@ final class SettingsViewModel: ObservableObject {
 
     /// 文字起こしモデルが未設定のときは true（初回ダイアログ表示用）
     func shouldShowWhisperModelDownloadSheet() async -> Bool {
-        let selected = await settings.selectedWhisperModelID
-        let downloaded = await whisperModelStore.downloadedModelIDs()
-        return selected == nil && downloaded.isEmpty
+        guard let selected = await settings.selectedWhisperModelID,
+              !selected.isEmpty else {
+            return true
+        }
+        return await whisperModelStore.localFileURL(forModelID: selected) == nil
     }
 
     func setOutputDirectory(_ url: URL) async {

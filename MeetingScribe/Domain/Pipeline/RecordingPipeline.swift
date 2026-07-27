@@ -66,7 +66,10 @@ final class RecordingPipeline: RecordingPipelineProtocol {
 
         // 1. 文字起こし
         await onProgress(.transcribing)
-        let modelID = await settings.selectedWhisperModelID ?? "default"
+        guard let modelID = await settings.selectedWhisperModelID,
+              !modelID.isEmpty else {
+            throw RecordingPipelineError.whisperModelNotSelected
+        }
         diagnosticLog.info("文字起こし開始 modelID=\(modelID)")
         let transcript = try await transcription.transcribe(audioOrVideoURL: fileURL, modelID: modelID)
         diagnosticLog.info("文字起こし完了 characterCount=\(transcript.count)")
@@ -102,15 +105,14 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         let sanitizedTitle = Self.sanitizeFileName(meetingTitle)
         let baseName = "\(dateString)_\(sanitizedTitle)"
 
-        // 5. 録画を outputDir にコピー
+        // 5. 録画を完成名へ移動（同じ出力フォルダ内なので再コピーしない）
         let recordingDestURL = outputDir.appendingPathComponent("\(baseName).\(ext)")
         let samePath = fileURL.standardizedFileURL.path == recordingDestURL.standardizedFileURL.path
         if !samePath {
             if fileManager.fileExists(atPath: recordingDestURL.path) {
                 try fileManager.removeItem(at: recordingDestURL)
             }
-            try fileManager.copyItem(at: fileURL, to: recordingDestURL)
-            try fileManager.removeItem(at: fileURL)
+            try fileManager.moveItem(at: fileURL, to: recordingDestURL)
         }
 
         // 6. 文字起こしを baseName にリネーム（同一 path の場合はスキップ）
@@ -143,5 +145,16 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         let result = collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "_"))
         if result.isEmpty { return "無題" }
         return String(result.prefix(80))
+    }
+}
+
+private enum RecordingPipelineError: LocalizedError {
+    case whisperModelNotSelected
+
+    var errorDescription: String? {
+        switch self {
+        case .whisperModelNotSelected:
+            "文字起こしモデルが選択されていません。設定からモデルをダウンロードしてください。"
+        }
     }
 }
