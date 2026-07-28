@@ -213,6 +213,28 @@ body {
   color: var(--text-muted);
 }
 
+.hero__brew,
+.cta__brew {
+  margin: var(--space-lg) 0 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.hero__brew code,
+.cta__brew code {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.35rem 0.6rem;
+  overflow-x: auto;
+  color: var(--text);
+  background: var(--surface-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  white-space: nowrap;
+  user-select: all;
+}
+
 /* ========== セクション共通・アニメーション ========== */
 .section {
   position: relative;

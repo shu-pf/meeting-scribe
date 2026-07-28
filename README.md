@@ -33,12 +33,19 @@ MeetingScribeは、Macのステータスメニューに常駐し、会議の画�
 
 ## システム要件
 
-- macOS
+- Appleシリコン搭載Mac
+- macOS 15.0以上
 - Ollama（要約機能を使用する場合）
 
 ## インストール
 
-[https://shu-pf.github.io/meeting-scribe/](https://shu-pf.github.io/meeting-scribe/) にアクセスし、「ダウンロード」ボタンをクリックしてください。
+Homebrewを使う場合:
+
+```sh
+brew install --cask shu-pf/tap/meeting-scribe
+```
+
+手動でインストールする場合は、[配布ページ](https://shu-pf.github.io/meeting-scribe/)からDMGをダウンロードしてください。
 
 ## 使い方
 
