@@ -185,13 +185,16 @@ spctl --assess --type execute --verbose "$STAGING_APP"
 echo "[6] Creating DMG..."
 if command -v create-dmg &>/dev/null; then
   rm -f "$DMG_PATH"
+  DMG_SOURCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/MeetingScribe-dmg.XXXXXX")"
+  trap 'rm -rf "$DMG_SOURCE_DIR"' EXIT
+  ditto --norsrc "$STAGING_APP" "$DMG_SOURCE_DIR/$APP_NAME.app"
   create-dmg \
-    --identity "$NOTARY_IDENTITY" \
+    --volname "$APP_NAME" \
+    --codesign "$NOTARY_IDENTITY" \
     --overwrite \
-    --no-version-in-filename \
-    --dmg-title "$APP_NAME" \
-    "$STAGING_APP" \
-    "$DIST_DIR"
+    --app-drop-link 480 170 \
+    "$DMG_PATH" \
+    "$DMG_SOURCE_DIR"
   if [[ ! -f "$DMG_PATH" ]]; then
     echo "Error: Expected DMG not found at $DMG_PATH (check create-dmg output)."
     exit 1
