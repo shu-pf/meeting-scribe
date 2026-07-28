@@ -209,11 +209,13 @@ private struct RecordingHistoryView: View {
                 }
             }
 
-            if items.isEmpty, !isLoading {
-                Text("完成した録画はまだありません")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            if items.isEmpty {
+                if !isLoading {
+                    Text("完成した録画はまだありません")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             } else {
                 ScrollView {
                     LazyVStack(spacing: 4) {
@@ -248,11 +250,20 @@ private struct RecordingHistoryView: View {
                         }
                     }
                 }
-                .frame(maxHeight: 180)
+                .frame(
+                    minHeight: historyListMinimumHeight,
+                    idealHeight: 180,
+                    maxHeight: 180
+                )
+                .layoutPriority(1)
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("録画履歴")
+    }
+
+    private var historyListMinimumHeight: CGFloat {
+        min(CGFloat(items.count) * 38, 80)
     }
 }
 
