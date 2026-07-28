@@ -48,6 +48,7 @@ struct PipelineJob: Identifiable, Equatable {
     let id: UUID
     let createdAt: Date
     var status: PipelineJobStatus
+    var statusUpdatedAt: Date
 }
 
 /// 永続ストアから復元した録画履歴
@@ -415,7 +416,12 @@ final class MenuBarViewModel: ObservableObject {
     private func runPipelineInBackground(fileURL: URL) {
         let jobID = UUID()
         let createdAt = Date()
-        let job = PipelineJob(id: jobID, createdAt: createdAt, status: .waiting)
+        let job = PipelineJob(
+            id: jobID,
+            createdAt: createdAt,
+            status: .waiting,
+            statusUpdatedAt: createdAt
+        )
         pipelineJobs.insert(job, at: 0)
         trimFinishedPipelineJobs()
         diagnosticLog.info("録画後パイプライン開始 fileURL=\(fileURL.path)")
@@ -446,6 +452,7 @@ final class MenuBarViewModel: ObservableObject {
                     whisperModelID: whisperModelID,
                     summaryModelID: summaryModelID,
                     state: .waiting,
+                    stateUpdatedAt: createdAt,
                     detail: nil
                 )
                 persistedPipelineJobs[jobID] = persistedJob
@@ -474,6 +481,7 @@ final class MenuBarViewModel: ObservableObject {
                 var restored = try await pipelineJobStore.loadAll()
                 for index in restored.indices where restored[index].state.isActive {
                     restored[index].state = .waiting
+                    restored[index].stateUpdatedAt = Date()
                     restored[index].detail = nil
                     try await pipelineJobStore.upsert(restored[index])
                 }
@@ -627,12 +635,14 @@ final class MenuBarViewModel: ObservableObject {
     private func updatePipelineJob(id: PipelineJob.ID, status: PipelineJobStatus) {
         guard let index = pipelineJobs.firstIndex(where: { $0.id == id }) else { return }
         pipelineJobs[index].status = status
+        pipelineJobs[index].statusUpdatedAt = Date()
         trimFinishedPipelineJobs()
     }
 
     private func markPipelineJobWaiting(id: UUID) {
         guard var job = persistedPipelineJobs[id] else { return }
         job.state = .waiting
+        job.stateUpdatedAt = Date()
         job.detail = nil
         persistedPipelineJobs[id] = job
         updatePipelineJob(id: id, status: .waiting)
@@ -648,6 +658,7 @@ final class MenuBarViewModel: ObservableObject {
     ) async {
         guard var job = persistedPipelineJobs[id] else { return }
         job.state = state
+        job.stateUpdatedAt = Date()
         job.detail = detail
         persistedPipelineJobs[id] = job
         try? await pipelineJobStore.upsert(job)
@@ -673,7 +684,8 @@ final class MenuBarViewModel: ObservableObject {
         return PipelineJob(
             id: persisted.id,
             createdAt: persisted.createdAt,
-            status: status
+            status: status,
+            statusUpdatedAt: persisted.stateUpdatedAt ?? persisted.createdAt
         )
     }
 

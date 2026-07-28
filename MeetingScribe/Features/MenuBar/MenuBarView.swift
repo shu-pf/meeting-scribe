@@ -352,31 +352,72 @@ private struct PipelineJobRow: View {
     let job: PipelineJob
 
     var body: some View {
-        HStack(spacing: 8) {
-            statusIcon
-                .frame(width: 16, height: 16)
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                statusIcon
+                    .frame(width: 16, height: 16)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(job.createdAt.formatted(date: .omitted, time: .shortened))
+                Text("\(job.createdAt.formatted(date: .omitted, time: .shortened)) の録画")
                     .font(.caption)
-                    .fontWeight(.medium)
+                    .fontWeight(.semibold)
+
+                Spacer(minLength: 0)
 
                 Text(statusText)
                     .font(.caption2)
+                    .fontWeight(.medium)
                     .foregroundStyle(statusColor)
-                    .lineLimit(2)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(statusColor.opacity(0.12), in: .capsule)
             }
 
-            Spacer(minLength: 0)
+            if isProcessing {
+                PipelineStageIndicator(status: job.status)
+
+                Text(statusDetail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Label(
+                        "\(elapsedText(at: context.date))・バックグラウンドで動作中",
+                        systemImage: "clock"
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                }
+            } else if case .waiting = job.status {
+                Text(statusDetail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if case .completed(let title) = job.status {
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            } else if case .failed(let message) = job.status {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .lineLimit(3)
+            }
         }
-        .padding(.vertical, 2)
+        .padding(8)
+        .background(.quaternary.opacity(0.65), in: .rect(cornerRadius: 8))
         .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
     private var statusIcon: some View {
         switch job.status {
-        case .waiting, .transcribing, .summarizing, .saving:
+        case .waiting:
+            Image(systemName: "clock.arrow.circlepath")
+                .foregroundStyle(.secondary)
+        case .transcribing, .summarizing, .saving:
             ProgressView()
                 .controlSize(.small)
         case .completed:
@@ -388,20 +429,46 @@ private struct PipelineJobRow: View {
         }
     }
 
+    private var isProcessing: Bool {
+        switch job.status {
+        case .transcribing, .summarizing, .saving:
+            true
+        case .waiting, .completed, .failed:
+            false
+        }
+    }
+
     private var statusText: String {
         switch job.status {
         case .waiting:
-            "待機中（スリープ・再起動後は自動再開）"
+            "再開待ち"
         case .transcribing:
-            "文字起こし中"
+            "工程 1/3"
         case .summarizing:
-            "要約中"
+            "工程 2/3"
         case .saving:
-            "ファイルを保存中"
-        case .completed(let title):
-            "完了：\(title)"
-        case .failed(let message):
-            "失敗：\(message)"
+            "工程 3/3"
+        case .completed:
+            "完了"
+        case .failed:
+            "失敗"
+        }
+    }
+
+    private var statusDetail: String {
+        switch job.status {
+        case .waiting:
+            "スリープ・再起動後も自動的に処理を再開します。"
+        case .transcribing:
+            "録画音声を解析して文字起こししています。"
+        case .summarizing:
+            "文字起こしから会議内容を整理して要約しています。"
+        case .saving:
+            "録画・文字起こし・要約を完成ファイルとして保存しています。"
+        case .completed:
+            "すべての処理が完了しました。"
+        case .failed:
+            "録画後の処理に失敗しました。"
         }
     }
 
@@ -410,6 +477,142 @@ private struct PipelineJobRow: View {
             return .red
         }
         return .secondary
+    }
+
+    private func elapsedText(at date: Date) -> String {
+        let elapsed = max(
+            0,
+            Int(date.timeIntervalSince(job.statusUpdatedAt))
+        )
+        let hours = elapsed / 3_600
+        let minutes = (elapsed % 3_600) / 60
+        let seconds = elapsed % 60
+
+        if hours > 0 {
+            return "この工程を \(hours)時間\(minutes)分処理中"
+        }
+        if minutes > 0 {
+            return "この工程を \(minutes)分\(seconds)秒処理中"
+        }
+        return "この工程を \(seconds)秒処理中"
+    }
+}
+
+private struct PipelineStageIndicator: View {
+    let status: PipelineJobStatus
+
+    var body: some View {
+        HStack(spacing: 5) {
+            PipelineStageView(
+                title: "文字起こし",
+                state: state(for: 0)
+            )
+            Image(systemName: "chevron.right")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+            PipelineStageView(
+                title: "要約",
+                state: state(for: 1)
+            )
+            Image(systemName: "chevron.right")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+            PipelineStageView(
+                title: "保存",
+                state: state(for: 2)
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityProgressLabel)
+    }
+
+    private var currentStageIndex: Int? {
+        switch status {
+        case .transcribing:
+            0
+        case .summarizing:
+            1
+        case .saving:
+            2
+        case .waiting, .completed, .failed:
+            nil
+        }
+    }
+
+    private func state(for stageIndex: Int) -> PipelineStageState {
+        if case .completed = status {
+            return .completed
+        }
+        guard let currentStageIndex else {
+            return .pending
+        }
+        if stageIndex < currentStageIndex {
+            return .completed
+        }
+        if stageIndex == currentStageIndex {
+            return .active
+        }
+        return .pending
+    }
+
+    private var accessibilityProgressLabel: String {
+        switch status {
+        case .waiting:
+            "録画後処理は再開待ちです"
+        case .transcribing:
+            "全3工程中1番目、文字起こしを実行中"
+        case .summarizing:
+            "全3工程中2番目、文字起こし完了、要約を実行中"
+        case .saving:
+            "全3工程中3番目、文字起こしと要約が完了、保存中"
+        case .completed:
+            "録画後処理の全3工程が完了"
+        case .failed:
+            "録画後処理に失敗"
+        }
+    }
+}
+
+private enum PipelineStageState: Equatable {
+    case pending
+    case active
+    case completed
+}
+
+private struct PipelineStageView: View {
+    let title: String
+    let state: PipelineStageState
+
+    var body: some View {
+        HStack(spacing: 4) {
+            stageIcon
+                .frame(width: 12, height: 12)
+
+            Text(title)
+                .font(.caption2)
+                .fontWeight(state == .active ? .semibold : .regular)
+                .foregroundStyle(state == .pending ? .tertiary : .primary)
+        }
+    }
+
+    @ViewBuilder
+    private var stageIcon: some View {
+        switch state {
+        case .pending:
+            Image(systemName: "circle")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        case .active:
+            ProgressView()
+                .controlSize(.mini)
+        case .completed:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.caption2)
+                .foregroundStyle(.green)
+        }
     }
 }
 

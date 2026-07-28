@@ -33,6 +33,7 @@ nonisolated struct PersistedPipelineJob: Codable, Identifiable, Sendable {
     let whisperModelID: String
     let summaryModelID: String
     var state: PersistedPipelineJobState
+    var stateUpdatedAt: Date?
     var detail: String?
 
     var recordingURL: URL {
