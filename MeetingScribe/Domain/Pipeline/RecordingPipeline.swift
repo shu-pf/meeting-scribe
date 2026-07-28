@@ -9,6 +9,9 @@ import Foundation
 struct PipelineResult: Sendable {
     /// 要約モデルが生成した会議タイトル
     let meetingTitle: String
+    let recordingURL: URL
+    let transcriptURL: URL
+    let summaryURL: URL
 }
 
 struct PipelineRequest: Sendable {
@@ -203,7 +206,12 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         }
 
         diagnosticLog.info("パイプライン処理完了 baseName=\(baseName)")
-        return PipelineResult(meetingTitle: meetingTitle)
+        return PipelineResult(
+            meetingTitle: meetingTitle,
+            recordingURL: recordingDestURL,
+            transcriptURL: transcriptURL,
+            summaryURL: summaryURL
+        )
     }
 
     /// ファイル名に使えない文字をアンダースコアに置換し、長さを制限する

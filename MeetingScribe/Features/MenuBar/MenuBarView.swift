@@ -118,14 +118,16 @@ struct MenuBarView: View {
                 )
             }
 
-            if viewModel.isOutputDirectorySet {
+            if viewModel.isOutputDirectorySet
+                || viewModel.isLoadingRecordingHistory
+                || !viewModel.recordingHistory.isEmpty {
                 Divider()
 
                 RecordingHistoryView(
                     items: viewModel.recordingHistory,
                     isLoading: viewModel.isLoadingRecordingHistory,
-                    onReload: viewModel.loadRecordingHistory,
-                    onReveal: viewModel.revealRecordingInFinder
+                    onReveal: viewModel.revealRecordingInFinder,
+                    onRemove: viewModel.removeRecordingHistory
                 )
             }
 
@@ -189,8 +191,8 @@ private struct MicrophoneRecordingChoiceView: View {
 private struct RecordingHistoryView: View {
     let items: [RecordingHistoryItem]
     let isLoading: Bool
-    let onReload: () -> Void
     let onReveal: (RecordingHistoryItem) -> Void
+    let onRemove: (RecordingHistoryItem) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -204,12 +206,6 @@ private struct RecordingHistoryView: View {
                     ProgressView()
                         .controlSize(.small)
                         .accessibilityLabel("録画履歴を読み込み中")
-                } else {
-                    Button(action: onReload) {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("録画履歴を更新")
                 }
             }
 
@@ -222,13 +218,33 @@ private struct RecordingHistoryView: View {
                 ScrollView {
                     LazyVStack(spacing: 4) {
                         ForEach(items) { item in
-                            Button {
-                                onReveal(item)
-                            } label: {
-                                RecordingHistoryRow(item: item)
+                            HStack(spacing: 4) {
+                                Button {
+                                    onReveal(item)
+                                } label: {
+                                    RecordingHistoryRow(item: item)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(!item.isRecordingAvailable)
+                                .accessibilityHint(
+                                    item.isRecordingAvailable
+                                        ? "Finderで録画ファイルを表示"
+                                        : "録画ファイルが見つかりません"
+                                )
+
+                                if !item.isRecordingAvailable {
+                                    Button(role: .destructive) {
+                                        onRemove(item)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel(
+                                        "\(item.title)を履歴から削除"
+                                    )
+                                    .help("履歴から削除")
+                                }
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityHint("Finderで録画ファイルを表示")
                         }
                     }
                 }
@@ -257,6 +273,14 @@ private struct RecordingHistoryRow: View {
 
                 HStack(spacing: 6) {
                     Text(item.recordedAt.formatted(date: .abbreviated, time: .shortened))
+
+                    if !item.isRecordingAvailable {
+                        Label(
+                            "ファイルなし",
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .foregroundStyle(.red)
+                    }
 
                     if item.hasTranscript {
                         Label("文字起こし", systemImage: "text.quote")

@@ -195,6 +195,7 @@ sequenceDiagram
 | 録画ファイル確定 | `MenuBarViewModel.finalizeRecording()` | 消えた保存先を再作成し、Application Supportの作業ファイルを設定済み保存先へ移動 |
 | 後処理 | `RecordingPipeline.processRecording()` | 全音声トラックの合成、Whisper文字起こし、Ollama要約、チェックポイント、録画・Markdownの完成名への移動・保存 |
 | 後処理の復旧 | `PipelineJobStore`、`MenuBarViewModel` | ジョブと保存先Bookmarkを永続化し、スリープ・終了・クラッシュ後に未完了フェーズから再開 |
+| 録画履歴 | `RecordingHistoryStore`、`MenuBarViewModel` | 録画ごとの履歴JSONとファイルBookmarkをApplication Supportへ永続化し、保存先変更後も過去の録画を表示 |
 | UI状態と通知 | `MenuBarViewModel` | 録画・パイプライン状態、エラー表示、完了通知 |
 | 診断 | `DiagnosticLogger`、`DiagnosticLogStore` | OSLogとローカルファイルへ処理状態・エラーを記録 |
 
@@ -227,6 +228,21 @@ sequenceDiagram
 Writerの正常終了後、設定済み保存先が録画中に削除されていれば同じパスへフォルダを再作成し、作業ファイルを `recording_<日時>.mp4` として移動します。その後、録画後パイプラインが同じ出力フォルダ内で日時と会議名を含む完成名へ移動します。長時間録画を複製しないため、いずれもコピーではなくファイル移動です。
 
 正常に移動できて作業フォルダが空なら `InProgress` を削除します。移動失敗やアプリの異常終了で `.partial.mp4` が残った場合は自動削除せず、復旧可能な状態で保全します。
+
+## 録画履歴
+
+録画履歴は現在の保存先フォルダを表示のたびに走査せず、録画後パイプラインの完了時に録画単位のJSONとして永続化します。
+
+```text
+~/Library/Application Support/MeetingScribe/RecordingHistory/
+├── Records/
+│   └── <録画ジョブID>.json
+└── legacy-output-folder-import-v1
+```
+
+各レコードには安定したUUID、録画日時、会議名、録画・文字起こし・要約のパスとSecurity-Scoped Bookmarkを保存します。新しい保存先を選んだ場合も既存レコードは変更せず、新しい録画だけを新しい保存先へ記録します。そのため、保存先変更前後の録画を同じ履歴に表示できます。
+
+初回移行時だけ、設定中の保存先から完成名の録画と対応するMarkdownを読み取り、履歴レコードへ変換します。移行完了マーカーにより同じフォルダを繰り返し取り込みません。録画ファイルがFinderなどから削除された場合はレコードを自動削除せず「ファイルなし」として表示し、ユーザーが履歴メタデータだけを削除できます。
 
 ## 録画後パイプライン
 

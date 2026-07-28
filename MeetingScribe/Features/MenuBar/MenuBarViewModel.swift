@@ -50,15 +50,15 @@ struct PipelineJob: Identifiable, Equatable {
     var status: PipelineJobStatus
 }
 
-/// 出力フォルダから復元した録画履歴
+/// 永続ストアから復元した録画履歴
 struct RecordingHistoryItem: Identifiable, Equatable {
-    var id: URL { recordingURL }
-
+    let id: UUID
     let recordingURL: URL
     let title: String
     let recordedAt: Date
     let hasTranscript: Bool
     let hasSummary: Bool
+    let isRecordingAvailable: Bool
 }
 
 private enum OutputDirectoryPreparationError: LocalizedError {
@@ -106,16 +106,9 @@ final class MenuBarViewModel: ObservableObject {
     private let settings: SettingsServiceProtocol
     private let pipeline: RecordingPipelineProtocol
     private let pipelineJobStore: PipelineJobStore
+    private let recordingHistoryStore: RecordingHistoryStore
     private let whisperModelStore: WhisperModelStoreProtocol
     private let diagnosticLog = DiagnosticLogger(category: "MenuBar")
-    private static let historyDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd_HHmm"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone.current
-        return formatter
-    }()
-    private static let recordingExtensions: Set<String> = ["mp4", "mov", "m4v"]
     /// 録画用のセキュリティスコープ付き出力フォルダ
     private var recordingSecurityScopedDirectory: URL?
     /// 録画完了後に作業領域から移動する最終保存先
@@ -151,13 +144,16 @@ final class MenuBarViewModel: ObservableObject {
         settings: SettingsServiceProtocol? = nil,
         pipeline: RecordingPipelineProtocol? = nil,
         whisperModelStore: WhisperModelStoreProtocol? = nil,
-        pipelineJobStore: PipelineJobStore? = nil
+        pipelineJobStore: PipelineJobStore? = nil,
+        recordingHistoryStore: RecordingHistoryStore? = nil
     ) {
         let settingsInstance = settings ?? SettingsService()
         self.recording = recording ?? RecordingService()
         self.settings = settingsInstance
         self.whisperModelStore = whisperModelStore ?? WhisperModelStore.shared
         self.pipelineJobStore = pipelineJobStore ?? PipelineJobStore()
+        self.recordingHistoryStore = recordingHistoryStore
+            ?? RecordingHistoryStore()
         self.pipeline = pipeline ?? RecordingPipeline(
             transcription: TranscriptionService(),
             summary: SummaryService()
@@ -567,6 +563,7 @@ final class MenuBarViewModel: ObservableObject {
             ) { [weak self] progress in
                 await self?.updatePipelineJob(id: job.id, progress: progress)
             }
+            await persistRecordingHistory(job: job, result: result)
             await updatePersistedPipelineJob(
                 id: job.id,
                 state: .completed,
@@ -581,7 +578,7 @@ final class MenuBarViewModel: ObservableObject {
             diagnosticLog.info(
                 "録画後パイプライン完了 title=\(result.meetingTitle)"
             )
-            loadRecordingHistory()
+            await refreshRecordingHistory()
             sendCompletionNotification(title: result.meetingTitle)
         } catch {
             if Task.isCancelled {
@@ -785,87 +782,108 @@ final class MenuBarViewModel: ObservableObject {
         }
     }
 
-    /// 出力フォルダ内の完成済み録画を読み取り、アプリをまたいだ履歴を復元する。
+    /// 永続ストアから録画履歴を読み込み、初回だけ従来の保存先から移行する。
     func loadRecordingHistory() {
         Task {
-            guard let outputDirectory = await settings.outputDirectoryURL else {
-                recordingHistory = []
-                return
-            }
-
-            isLoadingRecordingHistory = true
-            defer { isLoadingRecordingHistory = false }
-
-            let isAccessing = outputDirectory.startAccessingSecurityScopedResource()
-            defer {
-                if isAccessing {
-                    outputDirectory.stopAccessingSecurityScopedResource()
-                }
-            }
-
-            guard FileManager.default.fileExists(atPath: outputDirectory.path) else {
-                recordingHistory = []
-                return
-            }
-
-            do {
-                let fileURLs = try FileManager.default.contentsOfDirectory(
-                    at: outputDirectory,
-                    includingPropertiesForKeys: nil,
-                    options: [.skipsHiddenFiles]
-                )
-                let fileURLSet = Set(fileURLs.map(\.standardizedFileURL))
-                recordingHistory = fileURLs.compactMap { fileURL in
-                    makeRecordingHistoryItem(fileURL: fileURL, allFileURLs: fileURLSet)
-                }
-                .sorted { $0.recordedAt > $1.recordedAt }
-                diagnosticLog.info("録画履歴を更新 count=\(recordingHistory.count)")
-            } catch {
-                recordingHistory = []
-                diagnosticLog.error("録画履歴の取得に失敗 error=\(Self.describeError(error))")
-            }
+            await refreshRecordingHistory()
         }
     }
 
     func revealRecordingInFinder(_ item: RecordingHistoryItem) {
+        guard item.isRecordingAvailable else { return }
         NSWorkspace.shared.activateFileViewerSelecting([item.recordingURL])
     }
 
-    private func makeRecordingHistoryItem(
-        fileURL: URL,
-        allFileURLs: Set<URL>
-    ) -> RecordingHistoryItem? {
-        guard Self.recordingExtensions.contains(fileURL.pathExtension.lowercased()) else {
-            return nil
+    func removeRecordingHistory(_ item: RecordingHistoryItem) {
+        Task {
+            do {
+                try await recordingHistoryStore.remove(id: item.id)
+                recordingHistory.removeAll { $0.id == item.id }
+                diagnosticLog.info("録画履歴を削除 id=\(item.id.uuidString)")
+            } catch {
+                diagnosticLog.error(
+                    "録画履歴の削除に失敗 error=\(Self.describeError(error))"
+                )
+            }
         }
+    }
 
-        let baseName = fileURL.deletingPathExtension().lastPathComponent
-        guard baseName.count > 16 else { return nil }
-
-        let dateText = String(baseName.prefix(15))
-        guard let recordedAt = Self.historyDateFormatter.date(from: dateText) else {
-            // `recording_...` の一時ファイルは完成済み履歴には含めない。
-            return nil
+    private func persistRecordingHistory(
+        job: PersistedPipelineJob,
+        result: PipelineResult
+    ) async {
+        let item = PersistedRecordingHistoryItem(
+            id: job.id,
+            recordedAt: job.recordingDate,
+            title: result.meetingTitle,
+            recordingURL: result.recordingURL,
+            transcriptURL: result.transcriptURL,
+            summaryURL: result.summaryURL
+        )
+        do {
+            try await recordingHistoryStore.upsert(item)
+            diagnosticLog.info("録画履歴を保存 id=\(job.id.uuidString)")
+        } catch {
+            diagnosticLog.error(
+                "録画履歴の保存に失敗 error=\(Self.describeError(error))"
+            )
         }
+    }
 
-        let titleStart = baseName.index(baseName.startIndex, offsetBy: 16)
-        let title = String(baseName[titleStart...]).replacingOccurrences(of: "_", with: " ")
-        let directory = fileURL.deletingLastPathComponent()
-        let transcriptURL = directory
-            .appendingPathComponent("\(baseName)_transcript")
-            .appendingPathExtension("md")
-            .standardizedFileURL
-        let summaryURL = directory
-            .appendingPathComponent("\(baseName)_summary")
-            .appendingPathExtension("md")
-            .standardizedFileURL
+    private func refreshRecordingHistory() async {
+        isLoadingRecordingHistory = true
+        defer { isLoadingRecordingHistory = false }
 
+        do {
+            if let outputDirectory = await settings.outputDirectoryURL {
+                let isAccessing =
+                    outputDirectory.startAccessingSecurityScopedResource()
+                defer {
+                    if isAccessing {
+                        outputDirectory.stopAccessingSecurityScopedResource()
+                    }
+                }
+                let importedCount = try await recordingHistoryStore
+                    .importLegacyRecordingsIfNeeded(from: outputDirectory)
+                if importedCount > 0 {
+                    diagnosticLog.info(
+                        "従来の録画履歴を移行 count=\(importedCount)"
+                    )
+                }
+            }
+
+            let persistedItems = try await recordingHistoryStore.loadAll()
+            recordingHistory = persistedItems.map(Self.makeRecordingHistoryItem)
+            diagnosticLog.info("録画履歴を読込 count=\(recordingHistory.count)")
+        } catch {
+            recordingHistory = []
+            diagnosticLog.error(
+                "録画履歴の取得に失敗 error=\(Self.describeError(error))"
+            )
+        }
+    }
+
+    private static func makeRecordingHistoryItem(
+        _ persisted: PersistedRecordingHistoryItem
+    ) -> RecordingHistoryItem {
+        let recordingURL = persisted.recordingURL
+        let transcriptURL = persisted.transcriptURL
+        let summaryURL = persisted.summaryURL
+        let fileManager = FileManager.default
         return RecordingHistoryItem(
-            recordingURL: fileURL,
-            title: title,
-            recordedAt: recordedAt,
-            hasTranscript: allFileURLs.contains(transcriptURL),
-            hasSummary: allFileURLs.contains(summaryURL)
+            id: persisted.id,
+            recordingURL: recordingURL,
+            title: persisted.title,
+            recordedAt: persisted.recordedAt,
+            hasTranscript: transcriptURL.map {
+                fileManager.fileExists(atPath: $0.path)
+            } ?? false,
+            hasSummary: summaryURL.map {
+                fileManager.fileExists(atPath: $0.path)
+            } ?? false,
+            isRecordingAvailable: fileManager.fileExists(
+                atPath: recordingURL.path
+            )
         )
     }
 
