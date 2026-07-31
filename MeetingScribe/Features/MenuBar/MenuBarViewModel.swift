@@ -49,6 +49,8 @@ struct PipelineJob: Identifiable, Equatable {
     let createdAt: Date
     var status: PipelineJobStatus
     var statusUpdatedAt: Date
+    /// 保存済みの文字起こしから要約だけをやり直すジョブか
+    var isResummarize: Bool = false
 }
 
 /// 永続ストアから復元した録画履歴
@@ -60,6 +62,13 @@ struct RecordingHistoryItem: Identifiable, Equatable {
     let hasTranscript: Bool
     let hasSummary: Bool
     let isRecordingAvailable: Bool
+    let transcriptURL: URL?
+    let summaryURL: URL?
+
+    /// 保存済みの文字起こしが残っていれば、要約だけをやり直せる
+    var canResummarize: Bool {
+        hasTranscript && transcriptURL != nil
+    }
 }
 
 private enum OutputDirectoryPreparationError: LocalizedError {
@@ -94,6 +103,8 @@ final class MenuBarViewModel: ObservableObject {
     @Published private(set) var pipelineJobs: [PipelineJob] = []
     @Published private(set) var recordingHistory: [RecordingHistoryItem] = []
     @Published private(set) var isLoadingRecordingHistory = false
+    /// 要約のやり直しが進行中（再開待ちを含む）の履歴ID
+    @Published private(set) var resummarizingHistoryIDs: Set<UUID> = []
     /// 出力フォルダが設定済みか（未設定の場合は録画開始不可）
     @Published var isOutputDirectorySet = false
     /// 選択済みWhisperモデルの実ファイルが利用可能か
@@ -472,6 +483,83 @@ final class MenuBarViewModel: ObservableObject {
         pipelineTasks[jobID] = task
     }
 
+    /// 保存済みの文字起こしを使って要約だけをやり直す。会議名でファイル名も付け替える。
+    func resummarize(_ item: RecordingHistoryItem) {
+        guard let transcriptURL = item.transcriptURL, item.canResummarize else {
+            errorMessage = "文字起こしファイルが見つからないため、要約をやり直せません。"
+            return
+        }
+        guard !resummarizingHistoryIDs.contains(item.id) else { return }
+        resummarizingHistoryIDs.insert(item.id)
+
+        let jobID = UUID()
+        let createdAt = Date()
+        pipelineJobs.insert(
+            PipelineJob(
+                id: jobID,
+                createdAt: createdAt,
+                status: .waiting,
+                statusUpdatedAt: createdAt,
+                isResummarize: true
+            ),
+            at: 0
+        )
+        trimFinishedPipelineJobs()
+        diagnosticLog.info(
+            "要約やり直しを開始 historyID=\(item.id.uuidString) jobID=\(jobID.uuidString)"
+        )
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                guard let summaryModelID = await settings.selectedSummaryModelID,
+                      !summaryModelID.trimmingCharacters(
+                          in: .whitespacesAndNewlines
+                      ).isEmpty else {
+                    throw PipelineJobPreparationError.summaryModelUnavailable
+                }
+                // 現在の保存先ではなく、既存ファイルがある場所でそのまま付け替える。
+                // 保存先を変更したあとに古い履歴をやり直しても、ファイルは移動しない。
+                let targetDirectory = item.recordingURL.deletingLastPathComponent()
+                let bookmark = try? targetDirectory.bookmarkData(
+                    options: .withSecurityScope,
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+                let persistedJob = PersistedPipelineJob(
+                    id: jobID,
+                    createdAt: createdAt,
+                    recordingDate: item.recordedAt,
+                    recordingPath: item.recordingURL.path,
+                    outputDirectoryPath: targetDirectory.path,
+                    outputDirectoryBookmark: bookmark,
+                    // やり直しでは文字起こしを再実行しないため使わない
+                    whisperModelID: "",
+                    summaryModelID: summaryModelID,
+                    state: .waiting,
+                    stateUpdatedAt: createdAt,
+                    detail: nil,
+                    resummarizeTranscriptPath: transcriptURL.path,
+                    resummarizePreviousSummaryPath: item.summaryURL?.path,
+                    historyItemID: item.id
+                )
+                persistedPipelineJobs[jobID] = persistedJob
+                try await pipelineJobStore.upsert(persistedJob)
+                await executePipelineJob(persistedJob)
+            } catch {
+                resummarizingHistoryIDs.remove(item.id)
+                updatePipelineJob(
+                    id: jobID,
+                    status: .failed(error.localizedDescription)
+                )
+                diagnosticLog.error(
+                    "要約やり直しの準備失敗 error=\(Self.describeError(error))"
+                )
+            }
+            pipelineTasks[jobID] = nil
+        }
+        pipelineTasks[jobID] = task
+    }
+
     /// 永続化された未完了ジョブを起動時に復元する。
     func restorePipelineJobsIfNeeded() {
         guard !hasRestoredPipelineJobs else { return }
@@ -487,6 +575,11 @@ final class MenuBarViewModel: ObservableObject {
                 }
                 persistedPipelineJobs = Dictionary(
                     uniqueKeysWithValues: restored.map { ($0.id, $0) }
+                )
+                resummarizingHistoryIDs = Set(
+                    restored
+                        .filter { $0.state.isActive }
+                        .compactMap(\.historyItemID)
                 )
                 pipelineJobs = restored.map(Self.makePipelineJob)
                 trimFinishedPipelineJobs()
@@ -558,20 +651,43 @@ final class MenuBarViewModel: ObservableObject {
             }
         }
         do {
-            let request = PipelineRequest(
-                id: job.id,
-                fileURL: job.recordingURL,
-                outputDirectoryURL: outputDirectory,
-                recordingDate: job.recordingDate,
-                whisperModelID: job.whisperModelID,
-                summaryModelID: job.summaryModelID
-            )
-            let result = try await pipeline.processRecording(
-                request: request
-            ) { [weak self] progress in
-                await self?.updatePipelineJob(id: job.id, progress: progress)
+            let result: PipelineResult
+            if let transcriptPath = job.resummarizeTranscriptPath {
+                let request = ResummarizeRequest(
+                    id: job.id,
+                    recordingURL: job.recordingURL,
+                    transcriptURL: URL(fileURLWithPath: transcriptPath),
+                    existingSummaryURL: job.resummarizePreviousSummaryPath.map {
+                        URL(fileURLWithPath: $0)
+                    },
+                    outputDirectoryURL: outputDirectory,
+                    recordingDate: job.recordingDate,
+                    summaryModelID: job.summaryModelID
+                )
+                result = try await pipeline.resummarize(
+                    request: request
+                ) { [weak self] progress in
+                    await self?.updatePipelineJob(id: job.id, progress: progress)
+                }
+            } else {
+                let request = PipelineRequest(
+                    id: job.id,
+                    fileURL: job.recordingURL,
+                    outputDirectoryURL: outputDirectory,
+                    recordingDate: job.recordingDate,
+                    whisperModelID: job.whisperModelID,
+                    summaryModelID: job.summaryModelID
+                )
+                result = try await pipeline.processRecording(
+                    request: request
+                ) { [weak self] progress in
+                    await self?.updatePipelineJob(id: job.id, progress: progress)
+                }
             }
             await persistRecordingHistory(job: job, result: result)
+            if let historyItemID = job.historyItemID {
+                resummarizingHistoryIDs.remove(historyItemID)
+            }
             await updatePersistedPipelineJob(
                 id: job.id,
                 state: .completed,
@@ -598,6 +714,9 @@ final class MenuBarViewModel: ObservableObject {
                 updatePipelineJob(id: job.id, status: .waiting)
                 diagnosticLog.info("録画後パイプラインを再開待ちに変更")
             } else {
+                if let historyItemID = job.historyItemID {
+                    resummarizingHistoryIDs.remove(historyItemID)
+                }
                 await updatePersistedPipelineJob(
                     id: job.id,
                     state: .failed,
@@ -685,7 +804,8 @@ final class MenuBarViewModel: ObservableObject {
             id: persisted.id,
             createdAt: persisted.createdAt,
             status: status,
-            statusUpdatedAt: persisted.stateUpdatedAt ?? persisted.createdAt
+            statusUpdatedAt: persisted.stateUpdatedAt ?? persisted.createdAt,
+            isResummarize: persisted.isResummarize
         )
     }
 
@@ -825,7 +945,8 @@ final class MenuBarViewModel: ObservableObject {
         result: PipelineResult
     ) async {
         let item = PersistedRecordingHistoryItem(
-            id: job.id,
+            // やり直しでは新しい履歴を作らず、元の履歴を更新する
+            id: job.historyItemID ?? job.id,
             recordedAt: job.recordingDate,
             title: result.meetingTitle,
             recordingURL: result.recordingURL,
@@ -895,7 +1016,9 @@ final class MenuBarViewModel: ObservableObject {
             } ?? false,
             isRecordingAvailable: fileManager.fileExists(
                 atPath: recordingURL.path
-            )
+            ),
+            transcriptURL: transcriptURL,
+            summaryURL: summaryURL
         )
     }
 
@@ -911,8 +1034,14 @@ private enum ShareableContentError: Error {
 
 private enum PipelineJobPreparationError: LocalizedError {
     case settingsUnavailable
+    case summaryModelUnavailable
 
     var errorDescription: String? {
-        "録画後処理に必要な保存先またはモデル設定を確認できませんでした。"
+        switch self {
+        case .settingsUnavailable:
+            "録画後処理に必要な保存先またはモデル設定を確認できませんでした。"
+        case .summaryModelUnavailable:
+            "要約モデルが選択されていません。設定から要約モデルを選択してください。"
+        }
     }
 }

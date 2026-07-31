@@ -127,7 +127,9 @@ struct MenuBarView: View {
                     items: viewModel.recordingHistory,
                     isLoading: viewModel.isLoadingRecordingHistory,
                     onReveal: viewModel.revealRecordingInFinder,
-                    onRemove: viewModel.removeRecordingHistory
+                    onRemove: viewModel.removeRecordingHistory,
+                    onResummarize: viewModel.resummarize,
+                    resummarizingIDs: viewModel.resummarizingHistoryIDs
                 )
             }
 
@@ -193,6 +195,8 @@ private struct RecordingHistoryView: View {
     let isLoading: Bool
     let onReveal: (RecordingHistoryItem) -> Void
     let onRemove: (RecordingHistoryItem) -> Void
+    let onResummarize: (RecordingHistoryItem) -> Void
+    let resummarizingIDs: Set<UUID>
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -233,6 +237,25 @@ private struct RecordingHistoryView: View {
                                         ? "Finderで録画ファイルを表示"
                                         : "録画ファイルが見つかりません"
                                 )
+
+                                if resummarizingIDs.contains(item.id) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .accessibilityLabel(
+                                            "\(item.title)の要約をやり直し中"
+                                        )
+                                } else if item.canResummarize {
+                                    Button {
+                                        onResummarize(item)
+                                    } label: {
+                                        Image(systemName: "arrow.clockwise")
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel(
+                                        "\(item.title)の要約をやり直す"
+                                    )
+                                    .help("文字起こしから要約をやり直す")
+                                }
 
                                 if !item.isRecordingAvailable {
                                     Button(role: .destructive) {
@@ -368,9 +391,13 @@ private struct PipelineJobRow: View {
                 statusIcon
                     .frame(width: 16, height: 16)
 
-                Text("\(job.createdAt.formatted(date: .omitted, time: .shortened)) の録画")
-                    .font(.caption)
-                    .fontWeight(.semibold)
+                Text(
+                    job.isResummarize
+                        ? "\(job.createdAt.formatted(date: .omitted, time: .shortened)) の要約やり直し"
+                        : "\(job.createdAt.formatted(date: .omitted, time: .shortened)) の録画"
+                )
+                .font(.caption)
+                .fontWeight(.semibold)
 
                 Spacer(minLength: 0)
 
@@ -384,7 +411,10 @@ private struct PipelineJobRow: View {
             }
 
             if isProcessing {
-                PipelineStageIndicator(status: job.status)
+                PipelineStageIndicator(
+                    status: job.status,
+                    isResummarize: job.isResummarize
+                )
 
                 Text(statusDetail)
                     .font(.caption2)
@@ -450,19 +480,21 @@ private struct PipelineJobRow: View {
     }
 
     private var statusText: String {
+        // やり直しでは文字起こしを実行しないため、全2工程として数える。
+        let totalStages = job.isResummarize ? 2 : 3
         switch job.status {
         case .waiting:
-            "再開待ち"
+            return "再開待ち"
         case .transcribing:
-            "工程 1/3"
+            return "工程 1/\(totalStages)"
         case .summarizing:
-            "工程 2/3"
+            return job.isResummarize ? "工程 1/2" : "工程 2/3"
         case .saving:
-            "工程 3/3"
+            return job.isResummarize ? "工程 2/2" : "工程 3/3"
         case .completed:
-            "完了"
+            return "完了"
         case .failed:
-            "失敗"
+            return "失敗"
         }
     }
 
@@ -473,13 +505,19 @@ private struct PipelineJobRow: View {
         case .transcribing:
             "録画音声を解析して文字起こししています。"
         case .summarizing:
-            "文字起こしから会議内容を整理して要約しています。"
+            job.isResummarize
+                ? "保存済みの文字起こしから会議内容を整理して要約しています。"
+                : "文字起こしから会議内容を整理して要約しています。"
         case .saving:
-            "録画・文字起こし・要約を完成ファイルとして保存しています。"
+            job.isResummarize
+                ? "新しい会議名でファイル名を付け替えています。"
+                : "録画・文字起こし・要約を完成ファイルとして保存しています。"
         case .completed:
             "すべての処理が完了しました。"
         case .failed:
-            "録画後の処理に失敗しました。"
+            job.isResummarize
+                ? "要約のやり直しに失敗しました。"
+                : "録画後の処理に失敗しました。"
         }
     }
 
@@ -511,17 +549,21 @@ private struct PipelineJobRow: View {
 
 private struct PipelineStageIndicator: View {
     let status: PipelineJobStatus
+    /// 要約のやり直しでは文字起こし工程を実行しないため表示から省く
+    var isResummarize = false
 
     var body: some View {
         HStack(spacing: 5) {
-            PipelineStageView(
-                title: "文字起こし",
-                state: state(for: 0)
-            )
-            Image(systemName: "chevron.right")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
+            if !isResummarize {
+                PipelineStageView(
+                    title: "文字起こし",
+                    state: state(for: 0)
+                )
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
             PipelineStageView(
                 title: "要約",
                 state: state(for: 1)
@@ -570,19 +612,33 @@ private struct PipelineStageIndicator: View {
     }
 
     private var accessibilityProgressLabel: String {
+        if isResummarize {
+            switch status {
+            case .waiting:
+                return "要約のやり直しは再開待ちです"
+            case .transcribing, .summarizing:
+                return "全2工程中1番目、要約を実行中"
+            case .saving:
+                return "全2工程中2番目、要約が完了、保存中"
+            case .completed:
+                return "要約のやり直しが完了"
+            case .failed:
+                return "要約のやり直しに失敗"
+            }
+        }
         switch status {
         case .waiting:
-            "録画後処理は再開待ちです"
+            return "録画後処理は再開待ちです"
         case .transcribing:
-            "全3工程中1番目、文字起こしを実行中"
+            return "全3工程中1番目、文字起こしを実行中"
         case .summarizing:
-            "全3工程中2番目、文字起こし完了、要約を実行中"
+            return "全3工程中2番目、文字起こし完了、要約を実行中"
         case .saving:
-            "全3工程中3番目、文字起こしと要約が完了、保存中"
+            return "全3工程中3番目、文字起こしと要約が完了、保存中"
         case .completed:
-            "録画後処理の全3工程が完了"
+            return "録画後処理の全3工程が完了"
         case .failed:
-            "録画後処理に失敗"
+            return "録画後処理に失敗"
         }
     }
 }

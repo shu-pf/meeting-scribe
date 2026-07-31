@@ -35,6 +35,17 @@ nonisolated struct PersistedPipelineJob: Codable, Identifiable, Sendable {
     var state: PersistedPipelineJobState
     var stateUpdatedAt: Date?
     var detail: String?
+    /// 要約だけをやり直すジョブのとき、再利用する文字起こしファイルのパス。
+    /// 通常の録画後パイプラインでは nil。
+    var resummarizeTranscriptPath: String?
+    /// やり直し前の要約ファイルのパス。新しい会議名と異なる場合は片付ける。
+    var resummarizePreviousSummaryPath: String?
+    /// やり直し対象の録画履歴ID。完了時に新しい履歴を作らず、この履歴を更新する。
+    var historyItemID: UUID?
+
+    var isResummarize: Bool {
+        resummarizeTranscriptPath != nil
+    }
 
     var recordingURL: URL {
         URL(fileURLWithPath: recordingPath)
