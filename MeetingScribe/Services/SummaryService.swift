@@ -33,11 +33,23 @@ private let generateTimeout: TimeInterval = 5 * 60 * 60
 private let maximumAutomaticContextLength = 131_072
 /// /api/show が利用できない場合も長文を安全に分割できる保守的な値。
 private let fallbackContextLength = 8_192
+/// 分割時の1チャンクが目標とする入力トークン数。
+/// これより大きいとプロンプト処理の単価が二次的に悪化し、部分要約の圧縮率も上がりすぎて内容が失われる。
+/// これより小さいと生成回数が増え、生成はプロンプト処理より一桁遅いため総処理時間が伸びる。
+private let preferredChunkInputTokens = 15_360
+/// 日本語の会議文字起こしをOllamaへ渡したときの実測換算（1トークンあたり約1.8バイト）。
+/// 言語やモデルで前後するため、上限ではなく分割の目安としてのみ使う。
+private let estimatedUTF8BytesPerToken = 1.8
+/// 分割時の1チャンクの目安サイズ。コンテキスト長から決まる上限とあわせて小さい方を採用する。
+private let preferredChunkUTF8Bytes = Int(
+    Double(preferredChunkInputTokens) * estimatedUTF8BytesPerToken
+)
 
 /// 会議文字起こしを、モデルのコンテキスト長に収まる単位へ分割して要約する。
 final class SummaryService: SummaryServiceProtocol {
     private let session: URLSession
     private let baseURL: URL
+    private let diagnosticLog = DiagnosticLogger(category: "Summary")
 
     init(baseURL: URL? = nil, session: URLSession = .shared) {
         self.baseURL = baseURL ?? URL(string: ollamaBaseURL)!
@@ -55,21 +67,30 @@ final class SummaryService: SummaryServiceProtocol {
         let finalOutputTokens = min(8_192, max(512, contextLength / 8))
         let partialOutputTokens = min(2_048, max(256, contextLength / 16))
         let promptTokenReserve = min(4_096, max(1_024, contextLength / 4))
+        // 1回の生成へ渡せる入力の上限。統合段階でもこの上限を使う。
         let inputByteBudget = max(
             512,
             contextLength - finalOutputTokens - promptTokenReserve
         )
+        // 分割時は上限まで詰めず、処理時間と要約の密度が両立する大きさに抑える。
+        let chunkByteBudget = min(inputByteBudget, preferredChunkUTF8Bytes)
 
         let transcriptChunks = Self.chunk(
             transcript,
-            maximumUTF8Bytes: inputByteBudget
+            maximumUTF8Bytes: chunkByteBudget
+        )
+        diagnosticLog.info(
+            "要約入力を分割 chunkCount=\(transcriptChunks.count)"
+                + " contextLength=\(contextLength) inputByteBudget=\(inputByteBudget)"
+                + " chunkByteBudget=\(chunkByteBudget)"
         )
         if transcriptChunks.count == 1, let transcriptChunk = transcriptChunks.first {
             let raw = try await generate(
                 prompt: Self.finalPrompt(for: transcriptChunk),
                 modelID: modelID,
                 contextLength: contextLength,
-                outputTokens: finalOutputTokens
+                outputTokens: finalOutputTokens,
+                stage: "最終要約"
             )
             return Self.parseSummarizeResult(raw)
         }
@@ -86,7 +107,8 @@ final class SummaryService: SummaryServiceProtocol {
                 ),
                 modelID: modelID,
                 contextLength: contextLength,
-                outputTokens: partialOutputTokens
+                outputTokens: partialOutputTokens,
+                stage: "部分要約\(index + 1)/\(transcriptChunks.count)"
             )
             partialSummaries.append(
                 Self.prefix(
@@ -107,7 +129,8 @@ final class SummaryService: SummaryServiceProtocol {
             prompt: Self.finalPrompt(for: consolidated),
             modelID: modelID,
             contextLength: contextLength,
-            outputTokens: finalOutputTokens
+            outputTokens: finalOutputTokens,
+            stage: "最終要約"
         )
         return Self.parseSummarizeResult(raw)
     }
@@ -143,7 +166,8 @@ final class SummaryService: SummaryServiceProtocol {
                     ),
                     modelID: modelID,
                     contextLength: contextLength,
-                    outputTokens: outputTokens
+                    outputTokens: outputTokens,
+                    stage: "部分要約の統合\(index + 1)/\(groups.count)"
                 )
                 next.append(
                     Self.prefix(
@@ -160,7 +184,8 @@ final class SummaryService: SummaryServiceProtocol {
         prompt: String,
         modelID: String,
         contextLength: Int,
-        outputTokens: Int
+        outputTokens: Int,
+        stage: String
     ) async throws -> String {
         let url = baseURL.appendingPathComponent("api/generate")
         var request = URLRequest(url: url)
@@ -171,6 +196,9 @@ final class SummaryService: SummaryServiceProtocol {
             "model": modelID,
             "prompt": prompt,
             "stream": false,
+            // 思考対応モデルは既定で思考を生成するが、その分は応答に含まれず num_predict だけを
+            // 消費する。長文要約では思考が上限に達して本文が空になるため、思考を無効化する。
+            "think": false,
             "options": [
                 "num_ctx": contextLength,
                 "num_predict": outputTokens,
@@ -190,7 +218,26 @@ final class SummaryService: SummaryServiceProtocol {
         }
 
         let decoded = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
-        return decoded.response ?? ""
+        let text = decoded.response ?? ""
+        diagnosticLog.info(
+            "生成応答 stage=\(stage) characterCount=\(text.count)"
+                + " doneReason=\(decoded.doneReason ?? "-")"
+                + " promptEvalCount=\(decoded.promptEvalCount ?? -1)"
+                + " evalCount=\(decoded.evalCount ?? -1)"
+        )
+        if decoded.doneReason == "length" {
+            diagnosticLog.warning(
+                "生成が出力上限で打ち切られました stage=\(stage) outputTokens=\(outputTokens)"
+            )
+        }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            diagnosticLog.error(
+                "生成応答が空でした stage=\(stage) doneReason=\(decoded.doneReason ?? "-")"
+                    + " evalCount=\(decoded.evalCount ?? -1)"
+            )
+            throw SummaryError.emptyGeneration(stage: stage)
+        }
+        return text
     }
 
     private func fetchModelContextLength(modelID: String) async throws -> Int {
@@ -444,6 +491,16 @@ final class SummaryService: SummaryServiceProtocol {
 
 private struct OllamaGenerateResponse: Decodable {
     let response: String?
+    let doneReason: String?
+    let promptEvalCount: Int?
+    let evalCount: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case response
+        case doneReason = "done_reason"
+        case promptEvalCount = "prompt_eval_count"
+        case evalCount = "eval_count"
+    }
 }
 
 private struct OllamaTagsResponse: Decodable {
@@ -473,11 +530,14 @@ enum SummaryError: Error, LocalizedError {
     case apiError(statusCode: Int, body: String?)
     case ollamaUpdateRequired
     case modelPullFailed(String)
+    case emptyGeneration(stage: String)
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
             return "Ollama からの応答が不正です。"
+        case .emptyGeneration(let stage):
+            return "要約モデルが空の応答を返しました（\(stage)）。別の要約モデルを選択するか、Ollama とモデルを更新してからやり直してください。"
         case .apiError(let code, let body):
             if code == 404 || code == 503 {
                 return "Ollama が起動していないか、モデルが見つかりません。Ollama を起動し、要約用モデルをインストールしてください。"
