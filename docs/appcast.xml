@@ -3,6 +3,15 @@
     <channel>
         <title>MeetingScribe</title>
         <item>
+            <title>1.4.4</title>
+            <pubDate>Fri, 31 Jul 2026 17:57:33 +0900</pubDate>
+            <sparkle:version>102</sparkle:version>
+            <sparkle:shortVersionString>1.4.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.4.4/MeetingScribe.dmg" length="3765303" type="application/octet-stream" sparkle:edSignature="RJafscKFSmZjl6Gx9UGp6wahgFBAXapPNdZeKIyGVmHx8YidBB6/x7ix5Dq9lV6EfwLFtTzWMdU+R2sz/QrPAw=="/>
+        </item>
+        <item>
             <title>1.4.3</title>
             <pubDate>Thu, 30 Jul 2026 17:53:46 +0900</pubDate>
             <sparkle:version>98</sparkle:version>
@@ -19,15 +28,6 @@
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.4.2/MeetingScribe.dmg" length="3739404" type="application/octet-stream" sparkle:edSignature="dU4KCnT+BUGEV7IY9bX7Gfr7VgOM2YE9jnmfL2MOBloocUgs6W6ST4j2CLU7Cy9QVUBVBnD1gGpwWmXH1zMsCQ=="/>
-        </item>
-        <item>
-            <title>1.4.1</title>
-            <pubDate>Tue, 28 Jul 2026 15:00:30 +0900</pubDate>
-            <sparkle:version>90</sparkle:version>
-            <sparkle:shortVersionString>1.4.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/shu-pf/meeting-scribe/releases/download/v1.4.1/MeetingScribe.dmg" length="3720741" type="application/octet-stream" sparkle:edSignature="a78UDNINbg8ZaifxfSP8+GLE9a07qgCFFLlfKTO0SkYXvhJqudq5QpYFF3r9K/859LzJtZ/EPISD1qMEQPKCCQ=="/>
         </item>
     </channel>
 </rss>
