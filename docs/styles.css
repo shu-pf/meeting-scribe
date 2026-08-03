@@ -348,29 +348,6 @@ body {
   box-shadow: 0 8px 28px rgba(0, 212, 170, 0.35);
 }
 
-/* ========== Demo ========== */
-.demo__video-wrap {
-  position: relative;
-  max-width: 900px;
-  margin: 0 auto;
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow), 0 0 0 1px rgba(0, 0, 0, 0.2);
-  background: var(--bg-elevated);
-}
-
-.demo__video {
-  display: block;
-  width: 100%;
-  height: auto;
-  vertical-align: middle;
-}
-
-.demo__video-wrap:focus-within {
-  box-shadow: var(--shadow-glow), 0 0 0 1px var(--accent);
-}
-
 /* フェードイン（表示時） */
 .animate-in {
   animation: fadeInUp 0.7s ease-out backwards;
