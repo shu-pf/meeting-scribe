@@ -108,22 +108,16 @@ struct MenuBarView: View {
                     .lineLimit(2)
             }
 
-            if !viewModel.pipelineJobs.isEmpty {
-                Divider()
-
-                PipelineJobsView(
-                    jobs: viewModel.pipelineJobs,
-                    activeCount: viewModel.activePipelineJobCount,
-                    waitingCount: viewModel.waitingPipelineJobCount
-                )
-            }
-
             if viewModel.isOutputDirectorySet
                 || viewModel.isLoadingRecordingHistory
-                || !viewModel.recordingHistory.isEmpty {
+                || !viewModel.recordingHistory.isEmpty
+                || !viewModel.pipelineJobs.isEmpty {
                 Divider()
 
-                RecordingHistoryView(
+                RecordingsView(
+                    jobs: viewModel.pipelineJobs,
+                    activeCount: viewModel.activePipelineJobCount,
+                    waitingCount: viewModel.waitingPipelineJobCount,
                     items: viewModel.recordingHistory,
                     isLoading: viewModel.isLoadingRecordingHistory,
                     onReveal: viewModel.revealRecordingInFinder,
@@ -190,7 +184,10 @@ private struct MicrophoneRecordingChoiceView: View {
     }
 }
 
-private struct RecordingHistoryView: View {
+private struct RecordingsView: View {
+    let jobs: [PipelineJob]
+    let activeCount: Int
+    let waitingCount: Int
     let items: [RecordingHistoryItem]
     let isLoading: Bool
     let onReveal: (RecordingHistoryItem) -> Void
@@ -201,17 +198,51 @@ private struct RecordingHistoryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("録画履歴", systemImage: "clock.arrow.circlepath")
+                Label("録画", systemImage: "video")
                     .font(.headline)
 
                 Spacer()
 
-                if isLoading {
+                if let statusSummary {
+                    Text(statusSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if isLoading {
                     ProgressView()
                         .controlSize(.small)
                         .accessibilityLabel("録画履歴を読み込み中")
                 }
             }
+
+            if !visibleJobs.isEmpty {
+                Text("処理状況")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                if visibleJobs.count == 1, let job = visibleJobs.first {
+                    PipelineJobRow(job: job)
+                        // メニューの高さが不足しても、処理中の1件を優先して残す。
+                        .layoutPriority(2)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 6) {
+                            ForEach(visibleJobs) { job in
+                                PipelineJobRow(job: job)
+                            }
+                        }
+                    }
+                    .frame(
+                        minHeight: pipelineListMinimumHeight,
+                        maxHeight: 170
+                    )
+                    // 2件以上は高さを制限して、一覧内でスクロールできるようにする。
+                    .layoutPriority(2)
+                }
+            }
+
+            Text("録画履歴")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
 
             if items.isEmpty {
                 if !isLoading {
@@ -282,11 +313,47 @@ private struct RecordingHistoryView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("録画履歴")
+        .accessibilityLabel("録画と処理状況")
     }
 
     private var historyListMinimumHeight: CGFloat {
         min(CGFloat(items.count) * 38, 80)
+    }
+
+    /// 完了ジョブは録画履歴と重複するため、進行中・待機中・失敗だけを表示する。
+    private var visibleJobs: [PipelineJob] {
+        jobs.filter { job in
+            switch job.status {
+            case .waiting, .transcribing, .summarizing, .saving, .failed:
+                true
+            case .completed:
+                false
+            }
+        }
+    }
+
+    private var statusSummary: String? {
+        if waitingCount > 0 {
+            return "処理中 \(activeCount)件・待機 \(waitingCount)件"
+        }
+        if activeCount > 0 {
+            return "\(activeCount)件を処理中"
+        }
+        let failedCount = visibleJobs.count { job in
+            if case .failed = job.status { return true }
+            return false
+        }
+        if failedCount > 0 {
+            return "\(failedCount)件に問題"
+        }
+        return nil
+    }
+
+    private var pipelineListMinimumHeight: CGFloat {
+        if visibleJobs.contains(where: { $0.status.isActive }) {
+            return 88
+        }
+        return min(CGFloat(visibleJobs.count) * 48, 80)
     }
 }
 
@@ -330,55 +397,9 @@ private struct RecordingHistoryRow: View {
             }
 
             Spacer(minLength: 0)
-
-            Image(systemName: "arrow.right.circle")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
         }
         .contentShape(.rect)
         .padding(.vertical, 3)
-    }
-}
-
-private struct PipelineJobsView: View {
-    let jobs: [PipelineJob]
-    let activeCount: Int
-    let waitingCount: Int
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("録画後の処理", systemImage: "list.bullet.rectangle")
-                    .font(.headline)
-
-                Spacer()
-
-                Text(summaryText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            ScrollView {
-                LazyVStack(spacing: 6) {
-                    ForEach(jobs) { job in
-                        PipelineJobRow(job: job)
-                    }
-                }
-            }
-            .frame(maxHeight: 170)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("録画後の処理")
-    }
-
-    private var summaryText: String {
-        if waitingCount > 0 {
-            return "処理中 \(activeCount)件・待機 \(waitingCount)件"
-        }
-        if activeCount > 0 {
-            return "\(activeCount)件を処理中"
-        }
-        return "最近の結果"
     }
 }
 

@@ -195,10 +195,15 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         await onProgress(.saving)
 
         // 4. 要約完了時に確定した日時 + 会議名の baseName を使用
-        let baseName = summaryCheckpoint.baseName
+        // macOSのファイルシステム表現に依存せず、保存時の名前は常にNFCへ揃える。
+        // 旧バージョンが作ったチェックポイントから再開する場合もここで正規化する。
+        let baseName = summaryCheckpoint.baseName.precomposedStringWithCanonicalMapping
 
         // 5. 録画を完成名へ移動（同じ出力フォルダ内なので再コピーしない）
-        let recordingDestURL = outputDir.appendingPathComponent("\(baseName).\(ext)")
+        let recordingDestURL = Self.nfcFileURL(
+            fileName: "\(baseName).\(ext)",
+            in: outputDir
+        )
         let samePath = fileURL.standardizedFileURL.path == recordingDestURL.standardizedFileURL.path
         if !samePath {
             if fileManager.fileExists(atPath: fileURL.path) {
@@ -209,7 +214,10 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         }
 
         // 6. チェックポイントから文字起こしを完成名で保存する
-        let transcriptURL = outputDir.appendingPathComponent("\(baseName)_transcript.md")
+        let transcriptURL = Self.nfcFileURL(
+            fileName: "\(baseName)_transcript.md",
+            in: outputDir
+        )
         try markdownTranscript.write(
             to: transcriptURL,
             atomically: true,
@@ -217,7 +225,10 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         )
 
         // 7. 要約を出力（先頭に会議名を明示）
-        let summaryURL = outputDir.appendingPathComponent("\(baseName)_summary.md")
+        let summaryURL = Self.nfcFileURL(
+            fileName: "\(baseName)_summary.md",
+            in: outputDir
+        )
         try Self.markdownSummary(for: summaryResult).write(
             to: summaryURL,
             atomically: true,
@@ -320,13 +331,17 @@ final class RecordingPipeline: RecordingPipelineProtocol {
             )
         }
         let summaryResult = summaryCheckpoint.result
-        let baseName = summaryCheckpoint.baseName
+        // 中断前のチェックポイントにNFDの名前が残っていてもNFCで保存する。
+        let baseName = summaryCheckpoint.baseName.precomposedStringWithCanonicalMapping
         diagnosticLog.info("要約完了")
 
         await onProgress(.saving)
 
         // 録画を新しい会議名へ付け替える。録画が失われていても要約は残す。
-        var recordingDestURL = outputDir.appendingPathComponent("\(baseName).\(ext)")
+        var recordingDestURL = Self.nfcFileURL(
+            fileName: "\(baseName).\(ext)",
+            in: outputDir
+        )
         if request.recordingURL.standardizedFileURL != recordingDestURL.standardizedFileURL {
             if fileManager.fileExists(atPath: request.recordingURL.path) {
                 try fileManager.moveItem(at: request.recordingURL, to: recordingDestURL)
@@ -339,13 +354,19 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         }
 
         // 文字起こしも同じ会議名へ揃える。
-        let transcriptURL = outputDir.appendingPathComponent("\(baseName)_transcript.md")
+        let transcriptURL = Self.nfcFileURL(
+            fileName: "\(baseName)_transcript.md",
+            in: outputDir
+        )
         if request.transcriptURL.standardizedFileURL != transcriptURL.standardizedFileURL {
             try? fileManager.removeItem(at: transcriptURL)
             try fileManager.moveItem(at: request.transcriptURL, to: transcriptURL)
         }
 
-        let summaryURL = outputDir.appendingPathComponent("\(baseName)_summary.md")
+        let summaryURL = Self.nfcFileURL(
+            fileName: "\(baseName)_summary.md",
+            in: outputDir
+        )
         try Self.markdownSummary(for: summaryResult).write(
             to: summaryURL,
             atomically: true,
@@ -390,13 +411,30 @@ final class RecordingPipeline: RecordingPipelineProtocol {
     /// ファイル名に使えない文字をアンダースコアに置換し、長さを制限する
     private static func sanitizeFileName(_ title: String) -> String {
         let invalid = CharacterSet(charactersIn: "/\\:*?\"<>|")
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = title
+            .precomposedStringWithCanonicalMapping
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         let components = trimmed.unicodeScalars.map { invalid.contains($0) ? "_" : String($0) }
         let joined = components.joined()
         let collapsed = joined.replacingOccurrences(of: "_+", with: "_", options: .regularExpression)
         let result = collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "_"))
         if result.isEmpty { return "無題" }
-        return String(result.prefix(80))
+        return String(result.prefix(80)).precomposedStringWithCanonicalMapping
+    }
+
+    /// `URL.appendingPathComponent` はmacOSでファイル名をNFDへ変換するため、
+    /// NFCのUTF-8表現を保持したfile URLを直接組み立てる。
+    private static func nfcFileURL(fileName: String, in directory: URL) -> URL {
+        let normalizedFileName = fileName.precomposedStringWithCanonicalMapping
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/")
+        let encodedFileName = normalizedFileName.addingPercentEncoding(
+            withAllowedCharacters: allowed
+        ) ?? normalizedFileName
+        let directoryString = directory.absoluteString.hasSuffix("/")
+            ? directory.absoluteString
+            : directory.absoluteString + "/"
+        return URL(string: directoryString + encodedFileName)!
     }
 
     private static func availableBaseName(
@@ -409,9 +447,10 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         var candidate = preferredBaseName
         var suffix = 2
         while true {
-            let candidateURL = outputDirectory
-                .appendingPathComponent(candidate)
-                .appendingPathExtension(ext)
+            let candidateURL = nfcFileURL(
+                fileName: "\(candidate).\(ext)",
+                in: outputDirectory
+            )
             if candidateURL.standardizedFileURL == sourceURL.standardizedFileURL
                 || !fileManager.fileExists(atPath: candidateURL.path) {
                 return candidate
