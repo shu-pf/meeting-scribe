@@ -207,33 +207,26 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         let samePath = fileURL.standardizedFileURL.path == recordingDestURL.standardizedFileURL.path
         if !samePath {
             if fileManager.fileExists(atPath: fileURL.path) {
-                try fileManager.moveItem(at: fileURL, to: recordingDestURL)
+                try Self.moveItemNFC(at: fileURL, to: recordingDestURL)
             } else if !fileManager.fileExists(atPath: recordingDestURL.path) {
                 throw RecordingPipelineError.recordingNotFound(fileURL.path)
             }
         }
+        Self.renameToNFCIfNeeded(at: recordingDestURL)
 
         // 6. チェックポイントから文字起こしを完成名で保存する
         let transcriptURL = Self.nfcFileURL(
             fileName: "\(baseName)_transcript.md",
             in: outputDir
         )
-        try markdownTranscript.write(
-            to: transcriptURL,
-            atomically: true,
-            encoding: .utf8
-        )
+        try Self.writeNFC(markdownTranscript, to: transcriptURL)
 
         // 7. 要約を出力（先頭に会議名を明示）
         let summaryURL = Self.nfcFileURL(
             fileName: "\(baseName)_summary.md",
             in: outputDir
         )
-        try Self.markdownSummary(for: summaryResult).write(
-            to: summaryURL,
-            atomically: true,
-            encoding: .utf8
-        )
+        try Self.writeNFC(Self.markdownSummary(for: summaryResult), to: summaryURL)
         if earlyTranscriptURL.standardizedFileURL != transcriptURL.standardizedFileURL {
             try? fileManager.removeItem(at: earlyTranscriptURL)
         }
@@ -344,7 +337,7 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         )
         if request.recordingURL.standardizedFileURL != recordingDestURL.standardizedFileURL {
             if fileManager.fileExists(atPath: request.recordingURL.path) {
-                try fileManager.moveItem(at: request.recordingURL, to: recordingDestURL)
+                try Self.moveItemNFC(at: request.recordingURL, to: recordingDestURL)
             } else if !fileManager.fileExists(atPath: recordingDestURL.path) {
                 diagnosticLog.warning(
                     "やり直し対象の録画が見つからないため名前を変更しません path=\(request.recordingURL.path)"
@@ -352,6 +345,7 @@ final class RecordingPipeline: RecordingPipelineProtocol {
                 recordingDestURL = request.recordingURL
             }
         }
+        Self.renameToNFCIfNeeded(at: recordingDestURL)
 
         // 文字起こしも同じ会議名へ揃える。
         let transcriptURL = Self.nfcFileURL(
@@ -359,19 +353,15 @@ final class RecordingPipeline: RecordingPipelineProtocol {
             in: outputDir
         )
         if request.transcriptURL.standardizedFileURL != transcriptURL.standardizedFileURL {
-            try? fileManager.removeItem(at: transcriptURL)
-            try fileManager.moveItem(at: request.transcriptURL, to: transcriptURL)
+            try Self.moveItemNFC(at: request.transcriptURL, to: transcriptURL)
         }
+        Self.renameToNFCIfNeeded(at: transcriptURL)
 
         let summaryURL = Self.nfcFileURL(
             fileName: "\(baseName)_summary.md",
             in: outputDir
         )
-        try Self.markdownSummary(for: summaryResult).write(
-            to: summaryURL,
-            atomically: true,
-            encoding: .utf8
-        )
+        try Self.writeNFC(Self.markdownSummary(for: summaryResult), to: summaryURL)
         if let existingSummaryURL = request.existingSummaryURL,
            existingSummaryURL.standardizedFileURL != summaryURL.standardizedFileURL {
             try? fileManager.removeItem(at: existingSummaryURL)
@@ -435,6 +425,70 @@ final class RecordingPipeline: RecordingPipelineProtocol {
             ? directory.absoluteString
             : directory.absoluteString + "/"
         return URL(string: directoryString + encodedFileName)!
+    }
+
+    /// FoundationのファイルAPIはパスをNFDへ分解してからファイルシステムへ渡すため、
+    /// 保存名をNFCで確定させる操作はrename(2)へUTF-8バイト列を直接渡して行う。
+    /// 移動先に既存ファイルがあれば置き換える。
+    private static func moveItemNFC(at source: URL, to destination: URL) throws {
+        do {
+            try posixRename(fromPath: source.path, toPath: destination.path)
+        } catch let error as NSError
+            where error.domain == NSPOSIXErrorDomain && error.code == Int(EXDEV) {
+            // ボリュームをまたぐ移動はrename(2)が使えないためFoundationで移動し、名前だけ付け替える
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: source, to: destination)
+            renameToNFCIfNeeded(at: destination)
+        }
+    }
+
+    /// Foundationの書き込みは保存名をNFDへ分解するため、
+    /// 同じフォルダ内の一時名で書いてからNFC名へrename(2)で付け替える。
+    private static func writeNFC(_ content: String, to destination: URL) throws {
+        let tempURL = destination.deletingLastPathComponent()
+            .appendingPathComponent(".\(UUID().uuidString).tmp")
+        try content.write(to: tempURL, atomically: true, encoding: .utf8)
+        do {
+            try posixRename(fromPath: tempURL.path, toPath: destination.path)
+        } catch {
+            try? FileManager.default.removeItem(at: tempURL)
+            throw error
+        }
+    }
+
+    private static func posixRename(fromPath: String, toPath: String) throws {
+        var fromInfo = stat()
+        var toInfo = stat()
+        if stat(fromPath, &fromInfo) == 0, stat(toPath, &toInfo) == 0,
+           fromInfo.st_dev != toInfo.st_dev || fromInfo.st_ino != toInfo.st_ino {
+            // 既存エントリを置き換えるrenameはAPFSが元の名前バイト列を保持するため、先に削除する
+            unlink(toPath)
+        }
+        guard rename(fromPath, toPath) == 0 else {
+            throw NSError(
+                domain: NSPOSIXErrorDomain,
+                code: Int(errno),
+                userInfo: [NSFilePathErrorKey: toPath]
+            )
+        }
+    }
+
+    /// ディスク上の実名が旧バージョンの残したNFDの場合にNFCへ付け替える。
+    /// 正規化だけが異なる同一ファイルへのrename(2)は名前バイト列を更新する。
+    /// 失敗しても実害はないため黙って何もしない。
+    private static func renameToNFCIfNeeded(at url: URL) {
+        let fd = open(url.path, O_RDONLY)
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+        var pathBuffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard fcntl(fd, F_GETPATH, &pathBuffer) == 0 else { return }
+        let storedPath = String(cString: pathBuffer)
+        let storedName = (storedPath as NSString).lastPathComponent
+        let nfcName = storedName.precomposedStringWithCanonicalMapping
+        // Stringの==は正準等価で比較しNFDとNFCを同一視するため、UTF-8バイト列で比較する
+        guard Array(storedName.utf8) != Array(nfcName.utf8) else { return }
+        let directoryPath = (storedPath as NSString).deletingLastPathComponent
+        rename(storedPath, directoryPath + "/" + nfcName)
     }
 
     private static func availableBaseName(
