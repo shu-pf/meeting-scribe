@@ -333,7 +333,7 @@
 					"$(PROJECT_DIR)/MeetingScribe/Resources",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.4.5;
+				MARKETING_VERSION = 1.4.6;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.shu-pf.MeetingScribe.dev";
 				INFOPLIST_KEY_CFBundleDisplayName = "MeetingScribe Dev";
 				PRODUCT_NAME = "MeetingScribe Dev";
@@ -389,7 +389,7 @@
 					"$(PROJECT_DIR)/MeetingScribe/Resources",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.4.5;
+				MARKETING_VERSION = 1.4.6;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.shu-pf.MeetingScribe";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
