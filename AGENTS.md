@@ -6,6 +6,11 @@ Mac用ローカル会議議事録アプリ。メニューバー常駐、画面�
 
 Claude Code・Codex 両対応。新コマンドの許可追加は `~/.claude/settings.json` と `~/.codex/rules/default.rules` の両方に追加すること。
 
+## 作業とリリースの方針
+
+- ブランチは切らず、`main` で直接作業してコミットする
+- 機能や修正が完成し、動作確認まで済んだら、確認を取らずにそのままリリースする。手順は `internal-docs/dev.md` の「配布」に従い、バージョンを上げて GitHub Release と `docs/appcast.xml` の更新・push まで行う
+
 ## Build
 
 ```sh
