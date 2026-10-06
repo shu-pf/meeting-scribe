@@ -7,6 +7,8 @@
 #   NOTARY_TEAM_ID     … チーム ID（例: 3R3JQ22JJF）
 #   NOTARY_PASSWORD    … アプリ用パスワード（https://appleid.apple.com で発行）
 #   NOTARY_IDENTITY    … "Developer ID Application: Your Name (TEAM_ID)"
+#   NOTARY_KEYCHAIN_PROFILE … 指定時は Apple ID・チーム ID・パスワードの代わりに、
+#                 `xcrun notarytool store-credentials` でキーチェーンへ保存した認証情報を使う
 #
 # 任意:
 #   DIST_DIR, SPARKLE_BIN_DIR
@@ -52,15 +54,24 @@ if [[ -z "$SPARKLE_BIN_DIR" ]]; then
   SPARKLE_BIN_DIR="$(find "$HOME/Library/Developer/Xcode/DerivedData" -path "*/artifacts/sparkle/Sparkle/bin" -type d 2>/dev/null | head -1)"
 fi
 
+# 公証の認証引数。キーチェーンのプロファイルがあれば、パスワードを平文で渡さない。
+if [[ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]]; then
+  NOTARY_AUTH_ARGS=(--keychain-profile "$NOTARY_KEYCHAIN_PROFILE")
+else
+  NOTARY_AUTH_ARGS=(
+    --apple-id "$NOTARY_APPLE_ID"
+    --team-id "$NOTARY_TEAM_ID"
+    --password "$NOTARY_PASSWORD"
+  )
+fi
+
 # notarytool は Rejected でも終了コード 0 になることがあるため、出力で Accepted を確認する。
 submit_notary_and_require_accept() {
   local artifact="$1"
   local label="$2"
   local SUBMIT_OUTPUT
   SUBMIT_OUTPUT=$(xcrun notarytool submit "$artifact" \
-    --apple-id "$NOTARY_APPLE_ID" \
-    --team-id "$NOTARY_TEAM_ID" \
-    --password "$NOTARY_PASSWORD" \
+    "${NOTARY_AUTH_ARGS[@]}" \
     --wait 2>&1)
   echo "$SUBMIT_OUTPUT"
 
@@ -69,17 +80,19 @@ submit_notary_and_require_accept() {
     local SUB_ID
     SUB_ID=$(echo "$SUBMIT_OUTPUT" | grep "id:" | head -1 | awk '{print $NF}')
     if [[ -n "$SUB_ID" ]]; then
-      xcrun notarytool log "$SUB_ID" \
-        --apple-id "$NOTARY_APPLE_ID" \
-        --team-id "$NOTARY_TEAM_ID" \
-        --password "$NOTARY_PASSWORD"
+      xcrun notarytool log "$SUB_ID" "${NOTARY_AUTH_ARGS[@]}"
     fi
     exit 1
   fi
 }
 
 # 必須の環境変数
-for var in NOTARY_APPLE_ID NOTARY_TEAM_ID NOTARY_PASSWORD NOTARY_IDENTITY; do
+if [[ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]]; then
+  REQUIRED_VARS=(NOTARY_IDENTITY)
+else
+  REQUIRED_VARS=(NOTARY_APPLE_ID NOTARY_TEAM_ID NOTARY_PASSWORD NOTARY_IDENTITY)
+fi
+for var in "${REQUIRED_VARS[@]}"; do
   if [[ -z "${!var}" ]]; then
     echo "Error: $var is not set. Create $REPO_ROOT/.env from .env.example or export it."
     exit 1

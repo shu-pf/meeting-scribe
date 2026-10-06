@@ -9,7 +9,7 @@ Claude Code・Codex 両対応。新コマンドの許可追加は `~/.claude/set
 ## 作業とリリースの方針
 
 - ブランチは切らず、`main` で直接作業してコミットする
-- 機能や修正が完成し、動作確認まで済んだら、確認を取らずにそのままリリースする。手順は `internal-docs/dev.md` の「配布」に従い、バージョンを上げて GitHub Release と `docs/appcast.xml` の更新・push まで行う
+- 機能や修正が完成し、動作確認まで済んだら、確認を取らずにそのままリリースする。`MARKETING_VERSION` を上げてコミットし、`scripts/release.sh` で GitHub Release と `docs/appcast.xml` の更新・push まで行う（詳細は `internal-docs/dev.md` の「配布」）
 
 ## Build
 
