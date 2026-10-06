@@ -29,8 +29,18 @@ private let ollamaBaseURL = "http://localhost:11434"
 private let tagsTimeout: TimeInterval = 5
 /// 品質上限の5時間会議でも、ローカルLLMの初回ロードと生成を途中で打ち切らない。
 private let generateTimeout: TimeInterval = 5 * 60 * 60
-/// モデルが対応していても、ローカル実行時のメモリ使用量が過大にならない上限。
-private let maximumAutomaticContextLength = 131_072
+/// モデルが対応していても、ローカル実行時の負荷が過大にならない上限。
+/// num_ctx はKVキャッシュを最大長で確保するため、131072では12B級モデルでも
+/// 発熱でmacOSが緊急再起動した。分割要約のチャンクはこの長さに十分収まる。
+private let maximumAutomaticContextLength = 32_768
+/// 再起動直後はアプリがOllamaより先に起動するため、応答するまで待つ時間。
+private let ollamaStartupTimeout: TimeInterval = 3 * 60
+private let ollamaPollInterval: Duration = .seconds(3)
+/// 生成中にOllamaが落ちた・再起動した場合に、同じ段階をやり直す回数。
+private let generateConnectionRetryCount = 3
+/// 発熱が深刻な間は次の生成を始めずに冷えるのを待つ。待ち続けて処理が止まらないよう上限を設ける。
+private let thermalCooldownTimeout: TimeInterval = 20 * 60
+private let thermalPollInterval: Duration = .seconds(30)
 /// /api/show が利用できない場合も長文を安全に分割できる保守的な値。
 private let fallbackContextLength = 8_192
 /// 分割時の1チャンクが目標とする入力トークン数。
@@ -57,6 +67,8 @@ final class SummaryService: SummaryServiceProtocol {
     }
 
     func summarize(transcript: String, modelID: String) async throws -> SummarizeResult {
+        // 起動直後のOllamaへ問い合わせると、コンテキスト長も控えめな既定値へ落ちてしまうため先に待つ。
+        try await waitUntilOllamaResponds()
         let modelContextLength =
             (try? await fetchModelContextLength(modelID: modelID))
             ?? fallbackContextLength
@@ -64,7 +76,8 @@ final class SummaryService: SummaryServiceProtocol {
             max(modelContextLength, 2_048),
             maximumAutomaticContextLength
         )
-        let finalOutputTokens = min(8_192, max(512, contextLength / 8))
+        // 思考対応モデルは think=false でも数千トークンを使うことがあるため、上限を下げても出力枠は確保する。
+        let finalOutputTokens = min(8_192, max(512, contextLength / 4))
         let partialOutputTokens = min(2_048, max(256, contextLength / 16))
         let promptTokenReserve = min(4_096, max(1_024, contextLength / 4))
         // 1回の生成へ渡せる入力の上限。統合段階でもこの上限を使う。
@@ -180,7 +193,117 @@ final class SummaryService: SummaryServiceProtocol {
         }
     }
 
+    /// Ollamaへの接続が切れても、Ollamaが応答するまで待って同じ段階をやり直す。
     private func generate(
+        prompt: String,
+        modelID: String,
+        contextLength: Int,
+        outputTokens: Int,
+        stage: String
+    ) async throws -> String {
+        var attempt = 1
+        while true {
+            try await waitForThermalHeadroom(stage: stage)
+            do {
+                return try await generateOnce(
+                    prompt: prompt,
+                    modelID: modelID,
+                    contextLength: contextLength,
+                    outputTokens: outputTokens,
+                    stage: stage
+                )
+            } catch let error as URLError where Self.isOllamaConnectionError(error)
+                && attempt < generateConnectionRetryCount {
+                diagnosticLog.warning(
+                    "Ollamaへの接続が切れたため再試行します stage=\(stage)"
+                        + " attempt=\(attempt) code=\(error.code.rawValue)"
+                )
+                attempt += 1
+                try await waitUntilOllamaResponds()
+            } catch let error as URLError where Self.isOllamaConnectionError(error) {
+                throw SummaryError.ollamaUnreachable
+            }
+        }
+    }
+
+    /// `/api/tags` が応答するまで待つ。起動しないまま上限を過ぎたら接続できないエラーにする。
+    private func waitUntilOllamaResponds() async throws {
+        let deadline = Date().addingTimeInterval(ollamaStartupTimeout)
+        var hasLoggedWaiting = false
+        while true {
+            do {
+                _ = try await fetchAvailableModelIDs()
+                if hasLoggedWaiting {
+                    diagnosticLog.info("Ollamaの応答を確認しました")
+                }
+                return
+            } catch let error as URLError
+                where Self.isOllamaConnectionError(error) || error.code == .timedOut {
+                guard Date() < deadline else {
+                    diagnosticLog.error(
+                        "Ollamaが応答しないため要約を中止します code=\(error.code.rawValue)"
+                    )
+                    throw SummaryError.ollamaUnreachable
+                }
+                if !hasLoggedWaiting {
+                    diagnosticLog.info(
+                        "Ollamaの起動を待っています code=\(error.code.rawValue)"
+                    )
+                    hasLoggedWaiting = true
+                }
+                try await Task.sleep(for: ollamaPollInterval)
+            }
+        }
+    }
+
+    /// 発熱が深刻な間は次の生成を始めない。上限を過ぎたら処理を止めないよう続行する。
+    private func waitForThermalHeadroom(stage: String) async throws {
+        let deadline = Date().addingTimeInterval(thermalCooldownTimeout)
+        var hasLoggedWaiting = false
+        while Self.isThermalStateSevere(ProcessInfo.processInfo.thermalState) {
+            guard Date() < deadline else {
+                diagnosticLog.warning(
+                    "発熱が続いていますが待機上限に達したため生成を続けます stage=\(stage)"
+                )
+                return
+            }
+            if !hasLoggedWaiting {
+                diagnosticLog.warning(
+                    "発熱が深刻なため生成を待機します stage=\(stage)"
+                        + " thermalState=\(ProcessInfo.processInfo.thermalState.rawValue)"
+                )
+                hasLoggedWaiting = true
+            }
+            try await Task.sleep(for: thermalPollInterval)
+        }
+        if hasLoggedWaiting {
+            diagnosticLog.info("発熱が収まったため生成を再開します stage=\(stage)")
+        }
+    }
+
+    private static func isThermalStateSevere(_ state: ProcessInfo.ThermalState) -> Bool {
+        switch state {
+        case .serious, .critical:
+            true
+        case .nominal, .fair:
+            false
+        @unknown default:
+            false
+        }
+    }
+
+    /// Ollamaが未起動・再起動中・異常終了したときの接続エラー。生成のタイムアウトは含めない。
+    private static func isOllamaConnectionError(_ error: URLError) -> Bool {
+        switch error.code {
+        case .cannotConnectToHost, .networkConnectionLost, .cannotFindHost,
+             .notConnectedToInternet:
+            true
+        default:
+            false
+        }
+    }
+
+    private func generateOnce(
         prompt: String,
         modelID: String,
         contextLength: Int,
@@ -531,9 +654,12 @@ enum SummaryError: Error, LocalizedError {
     case ollamaUpdateRequired
     case modelPullFailed(String)
     case emptyGeneration(stage: String)
+    case ollamaUnreachable
 
     var errorDescription: String? {
         switch self {
+        case .ollamaUnreachable:
+            return "Ollama に接続できませんでした。Ollama が起動していることを確認してから、再実行してください。"
         case .invalidResponse:
             return "Ollama からの応答が不正です。"
         case .emptyGeneration(let stage):

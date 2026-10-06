@@ -34,6 +34,8 @@ env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 - 初回セットアップまたは要約モデル導入フローを変更したときは、Ollama未起動時に次へ進めないこと、古いOllamaでは日本語の更新手順を表示すること、アプリから推奨モデルを実際にダウンロードできること、完了後に選択状態となることを確認する
 - 設定ウィンドウはシングルトンとし、「設定を開く」の連打やアプリ再起動で複数枚に増えないことを確認する
 - 長文要約の分割・統合処理を変更したときは、`scripts/check_long_summary_input.swift` を `SummaryService.swift`・`DiagnosticLogger.swift` とともにコンパイル・実行し、モデルのコンテキスト長を超える合成文字起こしが入力エラーにならず日本語要約まで完了することを確認する。分割が2チャンク以上になる実際の長さの文字起こしでも、部分要約・最終要約が空にならず本文が出力されることを確認する（要約モデルが思考を生成する場合、思考が出力上限を使い切ると本文が空になる）
+- Ollamaとの接続・再試行を変更したときは、`scripts/fake_ollama.py` を起動してから `scripts/check_ollama_reconnect.swift` を `SummaryService.swift`・`DiagnosticLogger.swift` とともにコンパイル・実行する。Ollamaの起動が遅れる場合と生成中に1回切断される場合は要約が完了し、切断が再試行上限に達する場合とOllamaが起動しない場合は日本語の接続エラーになることを確認する
+- 失敗ジョブの再実行を変更したときは、Debugアプリで失敗ジョブの「再実行」を押し、文字起こしチェックポイントを再利用して要約から完了し、録画履歴へ追加されることを確認する
 - 要約のやり直し経路を変更したときは、`scripts/check_resummarize.swift` を `RecordingPipeline.swift`・`PipelineJobStore.swift`・`SummaryService.swift`・`TranscriptionService.swift`・`WhisperModelStore.swift`・`AudioExtractor.swift`・`DiagnosticLogger.swift` とともにコンパイル・実行し、既存ファイル名の日時部分を保ったまま会議名が付け替わり、やり直し前のファイルが残らないことを確認する。やり直しの出力先は現在の保存先設定ではなく既存ファイルのある場所とする
 - 録画後パイプラインの再開処理を変更したときは、文字起こし中と要約中のそれぞれでDebugアプリを終了・再起動し、永続キューとチェックポイントから二重実行せず完了することを確認する。文字起こし中の強制終了では、残留Whisperを実行パス照合後に停止してから1プロセスだけで再開することも確認する。蓋を閉じたスリープは処理継続を保証せず、スリープ前に再開待ちへ戻して復帰後に自動再開する
 - 録画中に設定済みの保存先フォルダが削除されても、録画完了時に保存先を再作成して完成ファイルを保存できることを境界条件として確認する

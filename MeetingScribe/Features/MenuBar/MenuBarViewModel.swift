@@ -560,6 +560,25 @@ final class MenuBarViewModel: ObservableObject {
         pipelineTasks[jobID] = task
     }
 
+    /// 失敗したジョブを再開待ちへ戻して実行し直す。
+    /// 作業領域のチェックポイントが残っていれば、完了済みの文字起こしは再利用して未完了の工程から続ける。
+    func retryPipelineJob(id: UUID) {
+        guard var job = persistedPipelineJobs[id], job.state == .failed else { return }
+        job.state = .waiting
+        job.stateUpdatedAt = Date()
+        job.detail = nil
+        persistedPipelineJobs[id] = job
+        if let historyItemID = job.historyItemID {
+            resummarizingHistoryIDs.insert(historyItemID)
+        }
+        updatePipelineJob(id: id, status: .waiting)
+        diagnosticLog.info("失敗した録画後ジョブを再実行 jobID=\(id.uuidString)")
+        Task {
+            try? await pipelineJobStore.upsert(job)
+            startPersistedPipelineJob(job)
+        }
+    }
+
     /// 永続化された未完了ジョブを起動時に復元する。
     func restorePipelineJobsIfNeeded() {
         guard !hasRestoredPipelineJobs else { return }

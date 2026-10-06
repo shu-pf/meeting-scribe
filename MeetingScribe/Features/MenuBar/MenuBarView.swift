@@ -123,6 +123,7 @@ struct MenuBarView: View {
                     onReveal: viewModel.revealRecordingInFinder,
                     onRemove: viewModel.removeRecordingHistory,
                     onResummarize: viewModel.resummarize,
+                    onRetryJob: viewModel.retryPipelineJob,
                     resummarizingIDs: viewModel.resummarizingHistoryIDs
                 )
             }
@@ -193,6 +194,7 @@ private struct RecordingsView: View {
     let onReveal: (RecordingHistoryItem) -> Void
     let onRemove: (RecordingHistoryItem) -> Void
     let onResummarize: (RecordingHistoryItem) -> Void
+    let onRetryJob: (UUID) -> Void
     let resummarizingIDs: Set<UUID>
 
     var body: some View {
@@ -220,14 +222,14 @@ private struct RecordingsView: View {
                     .foregroundStyle(.secondary)
 
                 if visibleJobs.count == 1, let job = visibleJobs.first {
-                    PipelineJobRow(job: job)
+                    PipelineJobRow(job: job, onRetry: { onRetryJob(job.id) })
                         // メニューの高さが不足しても、処理中の1件を優先して残す。
                         .layoutPriority(2)
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 6) {
                             ForEach(visibleJobs) { job in
-                                PipelineJobRow(job: job)
+                                PipelineJobRow(job: job, onRetry: { onRetryJob(job.id) })
                             }
                         }
                     }
@@ -405,6 +407,7 @@ private struct RecordingHistoryRow: View {
 
 private struct PipelineJobRow: View {
     let job: PipelineJob
+    let onRetry: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -466,11 +469,16 @@ private struct PipelineJobRow: View {
                     .font(.caption2)
                     .foregroundStyle(.red)
                     .lineLimit(3)
+
+                Button("再実行", systemImage: "arrow.clockwise", action: onRetry)
+                    .controlSize(.small)
+                    .help("済んだ工程は再利用し、失敗した工程からやり直す")
             }
         }
         .padding(8)
         .background(.quaternary.opacity(0.65), in: .rect(cornerRadius: 8))
-        .accessibilityElement(children: .combine)
+        // 失敗時は再実行ボタンを操作できるよう、子要素を残す。
+        .accessibilityElement(children: isFailed ? .contain : .combine)
     }
 
     @ViewBuilder
@@ -489,6 +497,11 @@ private struct PipelineJobRow: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
         }
+    }
+
+    private var isFailed: Bool {
+        if case .failed = job.status { return true }
+        return false
     }
 
     private var isProcessing: Bool {
