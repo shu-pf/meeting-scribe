@@ -6,6 +6,7 @@
 //  起動パス: Bundle.main/Contents/Resources/whisper
 //  引数: -m <モデル.bin> -otxt -l ja <入力WAV>
 //  出力: 標準出力にテキスト
+//  モデル ID が ElevenLabsScribe.modelID のときは WAV を ElevenLabs Scribe v2 に送る
 //
 
 import Darwin
@@ -40,18 +41,27 @@ final class TranscriptionService: TranscriptionServiceProtocol {
 
         transcriptionLogger().info("transcribe 開始 modelID=\(modelID, privacy: .public) input=\(audioOrVideoURL.path, privacy: .public)")
 
-        let modelURL = await store.localFileURL(forModelID: modelID)
-        guard let modelPath = modelURL?.path, FileManager.default.fileExists(atPath: modelPath) else {
-            transcriptionLogger().error("モデルが見つからない modelID=\(modelID, privacy: .public) path=\(String(describing: modelURL?.path ?? "nil"), privacy: .public)")
-            throw TranscriptionError.modelNotFound(modelID)
-        }
-        transcriptionLogger().debug("モデルパス modelPath=\(modelPath, privacy: .public)")
-
+        let isCloudModel = ElevenLabsScribe.isCloudModel(modelID)
         let whisperURL = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Resources/whisper")
-        guard FileManager.default.fileExists(atPath: whisperURL.path) else {
-            transcriptionLogger().error("whisper バイナリ不在 path=\(whisperURL.path, privacy: .public)")
-            throw TranscriptionError.whisperBinaryNotFound
+        var modelPath = ""
+        if isCloudModel {
+            guard ElevenLabsAPIKeyStore.hasKey else {
+                throw TranscriptionError.cloudAPIKeyMissing
+            }
+        } else {
+            let modelURL = await store.localFileURL(forModelID: modelID)
+            guard let path = modelURL?.path, FileManager.default.fileExists(atPath: path) else {
+                transcriptionLogger().error("モデルが見つからない modelID=\(modelID, privacy: .public) path=\(String(describing: modelURL?.path ?? "nil"), privacy: .public)")
+                throw TranscriptionError.modelNotFound(modelID)
+            }
+            modelPath = path
+            transcriptionLogger().debug("モデルパス modelPath=\(modelPath, privacy: .public)")
+
+            guard FileManager.default.fileExists(atPath: whisperURL.path) else {
+                transcriptionLogger().error("whisper バイナリ不在 path=\(whisperURL.path, privacy: .public)")
+                throw TranscriptionError.whisperBinaryNotFound
+            }
         }
 
         let tmpDir = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -111,6 +121,13 @@ final class TranscriptionService: TranscriptionServiceProtocol {
         defer { try? FileManager.default.removeItem(at: wavURLToUse) }
 
         try Task.checkCancellation()
+
+        if isCloudModel {
+            return try await ElevenLabsScribeService().transcribe(
+                wavURL: wavURLToUse,
+                workingDirectory: transcriptionDir
+            )
+        }
 
         let resourcesURL = whisperURL.deletingLastPathComponent()
         var env = ProcessInfo.processInfo.environment
@@ -282,6 +299,8 @@ enum TranscriptionError: LocalizedError {
     case whisperBinaryNotFound
     case outputEncodingFailed
     case processFailed(exitCode: Int, stderr: String?)
+    case cloudAPIKeyMissing
+    case cloudRequestFailed(statusCode: Int?, message: String?)
 
     var errorDescription: String? {
         switch self {
@@ -295,6 +314,18 @@ enum TranscriptionError: LocalizedError {
             var msg = "文字起こしに失敗しました（終了コード: \(code)）。"
             if let stderr, !stderr.isEmpty {
                 msg += " " + stderr
+            }
+            return msg
+        case .cloudAPIKeyMissing:
+            return "ElevenLabs の API キーが設定されていません。設定の「AIモデル」で API キーを保存してください。"
+        case .cloudRequestFailed(let statusCode, let message):
+            var msg = "ElevenLabs Scribe での文字起こしに失敗しました"
+            if let statusCode {
+                msg += "（HTTP \(statusCode)）"
+            }
+            msg += "。"
+            if let message, !message.isEmpty {
+                msg += " " + message
             }
             return msg
         }

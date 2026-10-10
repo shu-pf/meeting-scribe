@@ -27,8 +27,8 @@ flowchart TD
     LoadContent --> SelectTarget["録画対象を選択"]
     LoadContent -. 取得失敗 .-> UIError["エラー表示と診断ログ記録"]
 
-    SelectTarget --> WhisperCheck{"選択済みWhisperモデルの<br/>実ファイルがあるか"}
-    WhisperCheck -- No --> WhisperGuide["録画を無効化し<br/>モデルのダウンロードを案内"]
+    SelectTarget --> WhisperCheck{"選択済みWhisperモデルの<br/>実ファイルがあるか<br/>(Scribe v2選択時はAPIキーがあるか)"}
+    WhisperCheck -- No --> WhisperGuide["録画を無効化し<br/>モデルのダウンロードまたは<br/>APIキー保存を案内"]
     WhisperCheck -- Yes --> SummaryModelCheck{"要約モデルが<br/>選択済みか"}
     SummaryModelCheck -- No --> SummaryModelGuide["録画を無効化し<br/>要約モデルの設定を案内"]
     SummaryModelCheck -- Yes --> MicPreference{"マイク設定"}
@@ -75,7 +75,7 @@ flowchart TD
     RecreateOutput --> MoveOutput[".partial.mp4 を保存先へ移動"]
     MoveOutput --> Pipeline["録画後パイプラインをバックグラウンド開始"]
     Pipeline --> PersistJob["ジョブ・モデル・保存先Bookmarkを<br/>Application Supportへ永続化"]
-    PersistJob --> Transcribe["音声抽出<br/>Whisperで日本語文字起こし"]
+    PersistJob --> Transcribe["音声抽出<br/>Whisper (またはScribe v2) で<br/>日本語文字起こし"]
     Transcribe --> Transcript["文字起こしチェックポイントと<br/>Markdownを保存"]
     Transcript --> OllamaReady{"Ollamaが応答するか"}
     OllamaReady -- No --> OllamaWait["最大3分待つ"]

@@ -109,6 +109,7 @@ final class MenuBarViewModel: ObservableObject {
     @Published var isOutputDirectorySet = false
     /// 選択済みWhisperモデルの実ファイルが利用可能か
     @Published private(set) var isWhisperModelReady = false
+    @Published private(set) var isCloudTranscriptionSelected = false
     /// 要約モデルが選択済みか
     @Published private(set) var isSummaryModelSet = false
     @Published var isShowingMicrophoneChoice = false
@@ -214,7 +215,9 @@ final class MenuBarViewModel: ObservableObject {
         do {
                 await refreshWhisperModelAvailability()
                 guard isWhisperModelReady else {
-                    errorMessage = "文字起こしモデルをダウンロードしてください。"
+                    errorMessage = isCloudTranscriptionSelected
+                        ? "設定で ElevenLabs の API キーを保存してください。"
+                        : "文字起こしモデルをダウンロードしてください。"
                     diagnosticLog.warning("録画開始を中断: 文字起こしモデル未設定")
                     return
                 }
@@ -849,6 +852,12 @@ final class MenuBarViewModel: ObservableObject {
         guard let modelID = await settings.selectedWhisperModelID,
               !modelID.isEmpty else {
             isWhisperModelReady = false
+            isCloudTranscriptionSelected = false
+            return
+        }
+        isCloudTranscriptionSelected = ElevenLabsScribe.isCloudModel(modelID)
+        if isCloudTranscriptionSelected {
+            isWhisperModelReady = ElevenLabsAPIKeyStore.hasKey
             return
         }
         isWhisperModelReady = await whisperModelStore.localFileURL(

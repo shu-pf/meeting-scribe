@@ -129,7 +129,7 @@ private struct InitialSetupWelcomeStep: View {
 
             Text(
                 "会議の録画、文字起こし、要約をすべてこのMacの中で処理します。"
-                + "クラウドへ会議内容を送信しません。"
+                + "設定でクラウド文字起こしを選ばない限り、会議内容を外部へ送信しません。"
             )
             .font(.title3)
 

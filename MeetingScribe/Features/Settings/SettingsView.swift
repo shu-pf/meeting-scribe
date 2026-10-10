@@ -122,7 +122,7 @@ private struct ModelSettingsTab: View {
 
     var body: some View {
         Form {
-            Section("文字起こし（Whisper）") {
+            Section("文字起こし") {
                 Picker(
                     "モデル",
                     selection: Binding(
@@ -136,11 +136,41 @@ private struct ModelSettingsTab: View {
                 ) {
                     Text("未選択").tag("")
                     ForEach(viewModel.whisperModelIDs, id: \.self) { id in
-                        Text(id).tag(id)
+                        Text("Whisper \(id)").tag(id)
                     }
+                    Text(ElevenLabsScribe.displayName).tag(ElevenLabsScribe.modelID)
                 }
-                Button("モデルを追加") {
+                Button("Whisper モデルを追加") {
                     viewModel.showWhisperModelDownloadSheet = true
+                }
+            }
+
+            if viewModel.isCloudTranscriptionSelected {
+                Section("ElevenLabs Scribe v2") {
+                    if viewModel.hasElevenLabsAPIKey {
+                        HStack {
+                            Label("API キーは Keychain に保存済みです", systemImage: "checkmark.circle")
+                            Spacer()
+                            Button("削除") {
+                                viewModel.deleteElevenLabsAPIKey()
+                            }
+                        }
+                    } else {
+                        HStack {
+                            SecureField("API キー", text: $viewModel.elevenLabsAPIKeyInput)
+                            Button("保存") {
+                                viewModel.saveElevenLabsAPIKey()
+                            }
+                            .disabled(
+                                viewModel.elevenLabsAPIKeyInput
+                                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                                    .isEmpty
+                            )
+                        }
+                    }
+                    Text("録音した音声を ElevenLabs に送って文字起こしします（約 $0.22 / 時間）。話者ごとに分けて書き出します。要約はこれまでどおりこの Mac 内で行います。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 

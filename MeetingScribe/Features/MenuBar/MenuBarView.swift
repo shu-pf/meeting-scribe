@@ -73,7 +73,9 @@ struct MenuBarView: View {
 
             if !viewModel.isRecording, !viewModel.isWhisperModelReady {
                 Label(
-                    "文字起こしモデルをダウンロードしてください。",
+                    viewModel.isCloudTranscriptionSelected
+                        ? "設定で ElevenLabs の API キーを保存してください。"
+                        : "文字起こしモデルをダウンロードしてください。",
                     systemImage: "arrow.down.circle"
                 )
                 .font(.caption)

@@ -28,6 +28,12 @@ final class SettingsViewModel: ObservableObject {
         return [selected] + summaryModelIDs
     }
     @Published var showWhisperModelDownloadSheet: Bool = false
+    @Published var hasElevenLabsAPIKey: Bool = false
+    @Published var elevenLabsAPIKeyInput: String = ""
+
+    var isCloudTranscriptionSelected: Bool {
+        ElevenLabsScribe.isCloudModel(selectedWhisperModelID)
+    }
 
     private let settings: SettingsServiceProtocol
     private let whisperModelStore: WhisperModelStoreProtocol
@@ -61,6 +67,7 @@ final class SettingsViewModel: ObservableObject {
             launchAtLogin = await settings.launchAtLogin
         }
         whisperModelIDs = await whisperModelStore.downloadedModelIDs()
+        hasElevenLabsAPIKey = ElevenLabsAPIKeyStore.hasKey
         do {
             summaryModelIDs = try await summaryService.fetchAvailableModelIDs()
         } catch {
@@ -74,7 +81,21 @@ final class SettingsViewModel: ObservableObject {
               !selected.isEmpty else {
             return true
         }
+        if ElevenLabsScribe.isCloudModel(selected) {
+            return false
+        }
         return await whisperModelStore.localFileURL(forModelID: selected) == nil
+    }
+
+    func saveElevenLabsAPIKey() {
+        guard ElevenLabsAPIKeyStore.save(elevenLabsAPIKeyInput) else { return }
+        elevenLabsAPIKeyInput = ""
+        hasElevenLabsAPIKey = ElevenLabsAPIKeyStore.hasKey
+    }
+
+    func deleteElevenLabsAPIKey() {
+        ElevenLabsAPIKeyStore.delete()
+        hasElevenLabsAPIKey = false
     }
 
     func setOutputDirectory(_ url: URL) async {
