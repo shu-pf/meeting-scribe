@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (Debug, unsigned)
+        run: |
+          xcodebuild build \
+            -project MeetingScribe.xcodeproj \
+            -scheme "MeetingScribe - Debug" \
+            -destination "platform=macOS,arch=arm64" \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Run checks
+        run: ./scripts/run_checks.sh
