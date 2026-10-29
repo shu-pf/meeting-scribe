@@ -27,6 +27,22 @@ env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 - ビルド後は `scripts/verify_debug_signing.sh <MeetingScribe.appのパス>` を実行し、安定した開発署名であることを確認してから動作確認する
 - コード署名証明書を利用できないCI等でコンパイルだけ確認する場合は `CODE_SIGNING_ALLOWED=NO` を使用できるが、その成果物を動作確認には使用しない
 
+### CI
+
+- `.github/workflows/ci.yml` が push（main）と pull request で、`macos-26` 上の Debug ビルド（`CODE_SIGNING_ALLOWED=NO`）と `scripts/run_checks.sh` を実行する
+- TCC権限・Ollamaを使わない確認スクリプトを足したら `scripts/run_checks.sh` に加える
+
+## リリース
+
+```sh
+./scripts/release.sh <version> <リリースノート.md>
+```
+
+- 事前に main で `MARKETING_VERSION` を上げたコミット（`Bump version to x.y.z`）を push しておく
+- Release ビルド、署名・公証・DMG、GitHub Release、`docs/appcast.xml` のコミット・push、Homebrew tap（`shu-pf/homebrew-tap` の `Casks/meeting-scribe.rb`）の更新までを行う。公開の前に確認を求める
+- 必要なもの: Xcode、Developer ID Application 証明書（Team `3R3JQ22JJF`）、`.env` の公証用の値、ログインキーチェーンの Sparkle EdDSA 秘密鍵、`create-dmg`、`gh`
+- `scripts/notarize_and_dmg.sh` はアプリ本体を `MeetingScribe.entitlements` 付きで署名し直し、`REQUIRED_ENTITLEMENTS` が署名に入っていることを確かめる。entitlements を足したら `REQUIRED_ENTITLEMENTS` にも加える
+
 ## 動作確認
 
 - 機能変更後はビルド成功だけで完了とせず、Debugアプリを起動して変更した機能を実際に操作し、期待どおり動作することを確認する
@@ -36,6 +52,8 @@ env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 - ウィンドウ閉鎖時のScreenCaptureKit終了通知を確認するときは、`scripts/check_window_close_signal.swift` をコンパイル・実行し、映像フレーム受信後の結果だけを有効とする
 - 録画音声を変更したときは、マイクありの実録画にシステム音声とマイク音声の2トラックがあり両方に実データが入ること、マイクなしではシステム音声の1トラックだけになること、および各録画から文字起こし用WAVを正常に抽出・合成できることを確認する
 - Whisperモデル導入フローを変更したときは、アプリからモデルを実際にダウンロードし、録画開始の有効化と文字起こし完了まで確認する
+- Whisperの引数・バイナリ・VADモデルを変更したときは、冒頭に30秒以上の無音がある日本語音声で「ご視聴ありがとうございました」などの繰り返しが出ないこと、無音のない音声で文字起こしの量・内容が変わらないことを確認する
+- 「要約を作成しない」の経路を変更したときは、`scripts/check_skip_summary.swift` を `check_resummarize.swift` と同じファイル群とともにコンパイル・実行し、要約なしで `<日時>_<ID先頭8桁>` の録画・文字起こしだけが保存されること、そこから要約を作成すると日時部分を保ったまま会議名へ付け替わることを確認する。アプリではオン・オフそれぞれで録画から保存まで完了すること、オンで要約モデル未選択・Ollama未起動でも録画できること、処理中にアプリを再起動しても録画開始時の設定どおりに再開することを確認する
 - 初回セットアップまたは要約モデル導入フローを変更したときは、Ollama未起動時に次へ進めないこと、古いOllamaでは日本語の更新手順を表示すること、アプリから推奨モデルを実際にダウンロードできること、完了後に選択状態となることを確認する
 - 設定ウィンドウはシングルトンとし、「設定を開く」の連打やアプリ再起動で複数枚に増えないことを確認する
 - 長文要約の分割・統合処理を変更したときは、`scripts/check_long_summary_input.swift` を `SummaryService.swift`・`DiagnosticLogger.swift` とともにコンパイル・実行し、モデルのコンテキスト長を超える合成文字起こしが入力エラーにならず日本語要約まで完了することを確認する。分割が2チャンク以上になる実際の長さの文字起こしでも、部分要約・最終要約が空にならず本文が出力されることを確認する（要約モデルが思考を生成する場合、思考が出力上限を使い切ると本文が空になる）
@@ -55,7 +73,7 @@ Features/MenuBar/ メニューバーUI・録画ウィンドウ選択
 Features/Settings/ 設定画面・初回必須セットアップ・モデルダウンロード
 Services/         Recording / AudioExtractor / Transcription / Summary / Settings / WhisperModel
 Domain/Pipeline/  録画停止後パイプライン(音声抽出→文字起こし→要約→保存)
-Resources/        whisperバイナリ・dylib群(build_whisper.sh生成物、手で編集しない)
+Resources/        whisperバイナリ・dylib群・Silero VADモデル(build_whisper.sh生成物、手で編集しない)
 ```
 
 - 録画・停止・後処理・保存場所などのライフサイクルを変更した場合は、実装と `internal-docs/application-lifecycle.md` を照合し、同じ変更内で必ず更新する
@@ -64,11 +82,13 @@ Resources/        whisperバイナリ・dylib群(build_whisper.sh生成物、手
 ## 制約
 
 - 議事録生成は**日本語**固定(プロンプト変更時は必ず維持。過去に英語生成バグあり)
-- `Resources/` のバイナリは `scripts/build_whisper.sh` の生成物。手で編集しない
+- `Resources/` のバイナリとVADモデルは `scripts/build_whisper.sh` の生成物。手で編集しない。whisper.cppの版は同スクリプトの `WHISPER_CPP_VERSION`、VADモデルはSHA256で固定する
+- 文字起こしはWhisperを `-mc 0` とSilero VAD（`--vad -vm ggml-silero-v6.2.0.bin`）付きで実行する
 - マイク音声（自分の声）は「録画開始前に毎回確認」「常に含める」「常に含めない」の設定に従う。初期値は毎回確認。Teamsなど他アプリのミュート状態には連動しないことを確認画面で明示する
 - マイクありではシステム音声とマイク音声を別トラックで保持し、文字起こし時に全音声トラックをモノラルへ合成する。マイクなしではマイク権限を要求せず、システム音声トラックだけを録音・文字起こしする
-- 録画開始には、選択済みWhisperモデルの実ファイルと、選択済み要約モデルが必要。未設定時は録画を無効化して設定を案内し、存在しない `default` モデルへのフォールバックや要約のスキップを行わない
-- 初回起動では、保存先、画面収録権限、推奨Whisperモデル、推奨要約モデルがすべて準備できるまでセットアップを完了させない。マイク権限は任意で、自分の声を含める録画の開始時にも要求できる
+- 録画開始には、選択済みWhisperモデルの実ファイルと、選択済み要約モデルが必要。設定の「要約を作成しない」がオンのときだけ要約モデルは不要。未設定時は録画を無効化して設定を案内し、存在しない `default` モデルへのフォールバックを行わない
+- 「要約を作成しない」は録画開始時の値をジョブに保存し、再開時もその値に従う。オンのジョブは録画と文字起こしを `<日時>_<ジョブID先頭8桁>` の名前で保存し、要約ファイルを作らない。要約は録画履歴から既存のやり直し経路で作成する
+- 初回起動では、保存先、画面収録権限、推奨Whisperモデル、推奨要約モデルがすべて準備できるまでセットアップを完了させない。要約ステップで「要約を作成せずに文字起こしだけ使う」を選んだ場合だけ、要約モデルなしで完了できる。マイク権限は任意で、自分の声を含める録画の開始時にも要求できる
 - 要約時はOllamaからモデル固有のコンテキスト長を取得し、長文を部分要約してから段階的に統合する。ユーザーに最大コンテキスト長を設定させず、入力長超過をユーザー向けエラーにしない
 - 録画中のファイルは `~/Library/Application Support/MeetingScribe/InProgress/` に `.partial.mp4` として書き込み、正常終了後に設定済み保存先へ移動する。保存先が録画中に削除された場合は終了時に再作成する
 - 録画後処理のジョブ状態と文字起こし・要約チェックポイントは `~/Library/Application Support/MeetingScribe/PipelineJobs/` に永続化する。スリープ、アプリ終了、クラッシュ後は未完了フェーズから自動再開し、完成後に本文を含むチェックポイントを削除する
