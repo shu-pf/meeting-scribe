@@ -44,6 +44,8 @@ final class TranscriptionService: TranscriptionServiceProtocol {
         let isCloudModel = ElevenLabsScribe.isCloudModel(modelID)
         let whisperURL = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Resources/whisper")
+        let vadModelURL = whisperURL.deletingLastPathComponent()
+            .appendingPathComponent("ggml-silero-v6.2.0.bin")
         var modelPath = ""
         if isCloudModel {
             guard ElevenLabsAPIKeyStore.hasKey else {
@@ -62,12 +64,10 @@ final class TranscriptionService: TranscriptionServiceProtocol {
                 transcriptionLogger().error("whisper バイナリ不在 path=\(whisperURL.path, privacy: .public)")
                 throw TranscriptionError.whisperBinaryNotFound
             }
-        }
-        let vadModelURL = whisperURL.deletingLastPathComponent()
-            .appendingPathComponent("ggml-silero-v6.2.0.bin")
-        guard FileManager.default.fileExists(atPath: vadModelURL.path) else {
-            transcriptionLogger().error("VAD モデル不在 path=\(vadModelURL.path, privacy: .public)")
-            throw TranscriptionError.vadModelNotFound
+            guard FileManager.default.fileExists(atPath: vadModelURL.path) else {
+                transcriptionLogger().error("VAD モデル不在 path=\(vadModelURL.path, privacy: .public)")
+                throw TranscriptionError.vadModelNotFound
+            }
         }
 
         let tmpDir = URL(fileURLWithPath: NSTemporaryDirectory())

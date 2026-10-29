@@ -21,6 +21,7 @@ PIPELINE_SOURCES=(
   MeetingScribe/Domain/Pipeline/PipelineJobStore.swift
   MeetingScribe/Services/SummaryService.swift
   MeetingScribe/Services/TranscriptionService.swift
+  MeetingScribe/Services/ElevenLabsScribeService.swift
   MeetingScribe/Services/WhisperModelStore.swift
   MeetingScribe/Services/AudioExtractor.swift
   MeetingScribe/Services/DiagnosticLogger.swift
