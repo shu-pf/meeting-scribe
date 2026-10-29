@@ -48,6 +48,11 @@ DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
 STAGING_APP="$DIST_DIR/$APP_NAME.app"
 DMG_PATH="$DIST_DIR/${APP_NAME}.dmg"
 DOCS_APPCAST="$REPO_ROOT/docs/appcast.xml"
+ENTITLEMENTS="$REPO_ROOT/MeetingScribe/MeetingScribe.entitlements"
+# 署名後に必ず入っていなければならない entitlements
+REQUIRED_ENTITLEMENTS=(
+  com.apple.security.device.audio-input
+)
 
 # Sparkle ツールのディレクトリ（自動検出 or 環境変数）
 if [[ -z "$SPARKLE_BIN_DIR" ]]; then
@@ -173,10 +178,19 @@ if [[ -d "$SPARKLE_FW" ]]; then
 fi
 
 # 2c. アプリ本体（最後に署名）
-codesign --force --options runtime --sign "$NOTARY_IDENTITY" "$STAGING_APP"
+# --force で署名し直すと Xcode が埋め込んだ entitlements は消えるため、明示して付け直す
+codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$NOTARY_IDENTITY" "$STAGING_APP"
 
 echo "[3] Verifying code signature..."
 codesign --verify --verbose --strict "$STAGING_APP"
+SIGNED_ENTITLEMENTS="$(codesign -d --entitlements - --xml "$STAGING_APP" 2>/dev/null)"
+for key in "${REQUIRED_ENTITLEMENTS[@]}"; do
+  if ! grep -q "<key>$key</key>" <<<"$SIGNED_ENTITLEMENTS"; then
+    echo "Error: $key is missing from the signed app's entitlements."
+    exit 1
+  fi
+done
+echo "  Entitlements OK: ${REQUIRED_ENTITLEMENTS[*]}"
 
 # 4. 公証用 zip を提出
 echo "[4] Submitting app to Apple for notarization..."
