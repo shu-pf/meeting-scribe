@@ -663,7 +663,8 @@ final class MenuBarViewModel: ObservableObject {
             for task in tasks {
                 await task.value
             }
-            pipelineTasks.removeAll()
+            // 待ったタスクは終了時に自分の登録を消している。ここで全消しすると、
+            // 待っている間に始まった録画後ジョブの登録まで消え、同じジョブを二重に起動してしまう。
             isPipelinePausedForSleep = false
             let waitingJobs = persistedPipelineJobs.values
                 .filter { $0.state == .waiting }
