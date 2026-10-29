@@ -20,6 +20,7 @@ flowchart TD
     OllamaGuide --> SetupOllama
     SetupOllama -- Yes --> SetupSummary["Macのメモリに応じたGemma 4を<br/>Ollama APIでダウンロード"]
     SetupSummary --> SetupComplete["両モデルを選択状態にして<br/>初期設定完了を保存"]
+    SetupOllama -. 要約を作成せずに<br/>文字起こしだけ使う .-> SetupComplete
     SetupComplete --> Idle
 
     Idle --> OpenMenu["ユーザーがメニューを開く"]
@@ -29,7 +30,7 @@ flowchart TD
 
     SelectTarget --> WhisperCheck{"選択済みWhisperモデルの<br/>実ファイルがあるか"}
     WhisperCheck -- No --> WhisperGuide["録画を無効化し<br/>モデルのダウンロードを案内"]
-    WhisperCheck -- Yes --> SummaryModelCheck{"要約モデルが<br/>選択済みか"}
+    WhisperCheck -- Yes --> SummaryModelCheck{"要約モデルが選択済みか<br/>または「要約を作成しない」か"}
     SummaryModelCheck -- No --> SummaryModelGuide["録画を無効化し<br/>要約モデルの設定を案内"]
     SummaryModelCheck -- Yes --> MicPreference{"マイク設定"}
     MicPreference -- 毎回確認 --> MicDialog["自分の声を含めるか確認"]
@@ -75,9 +76,12 @@ flowchart TD
     RecreateOutput --> MoveOutput[".partial.mp4 を保存先へ移動"]
     MoveOutput --> Pipeline["録画後パイプラインをバックグラウンド開始"]
     Pipeline --> PersistJob["ジョブ・モデル・保存先Bookmarkを<br/>Application Supportへ永続化"]
-    PersistJob --> Transcribe["音声抽出<br/>Whisperで日本語文字起こし"]
+    PersistJob --> Transcribe["音声抽出<br/>Whisperで日本語文字起こし<br/>（VADで無音区間を除外）"]
     Transcribe --> Transcript["文字起こしチェックポイントと<br/>Markdownを保存"]
-    Transcript --> Summarize["Ollamaで日本語要約"]
+    Transcript --> SkipCheck{"ジョブの<br/>「要約を作成しない」"}
+    SkipCheck -- オン --> SaveWithoutSummary["録画・文字起こしを<br/>日時＋ID先頭8桁の名前で保存"]
+    SaveWithoutSummary --> Notify
+    SkipCheck -- オフ --> Summarize["Ollamaで日本語要約"]
     Summarize --> SummaryCheckpoint["要約結果と完成名を<br/>チェックポイント保存"]
     SummaryCheckpoint --> Save["録画を完成名へ移動し<br/>文字起こし・要約を保存"]
     Save --> Notify["完了状態を表示してローカル通知"]
@@ -101,7 +105,7 @@ flowchart TD
 2. 録画・文字起こし・要約の完成ファイルを置く保存先の選択
 3. 必須の画面収録権限と、任意のマイク権限の確認
 4. 推奨文字起こしモデル `large-v3-turbo` のダウンロードと選択
-5. Ollamaのインストール・起動確認、推奨要約モデルのダウンロードと選択
+5. Ollamaのインストール・起動確認、推奨要約モデルのダウンロードと選択。「要約を作成せずに文字起こしだけ使う」を選ぶと、設定の「要約を作成しない」をオンにして要約モデルなしで次へ進む
 6. 設定内容の確認とセットアップ完了
 
 WhisperモデルはMeetingScribeのApplication Support配下へ保存します。要約モデルはOllamaの `POST /api/pull` をストリーミングで呼び出し、進捗を画面へ表示します。Ollamaの起動と導入済みモデルは `GET /api/tags` で確認します。Ollama本体がない場合は公式ダウンロード、Applicationsへの導入、初回起動を番号付きで案内します。インストール済みでAPIが停止している場合は、セットアップ画面からOllamaを起動できます。モデル取得時にOllamaから更新要求が返った場合は、英語のAPIエラーをそのまま表示せず、最新版の導入手順と公式ダウンロードへのリンクを日本語で表示します。
@@ -132,7 +136,7 @@ sequenceDiagram
         User->>UI: 含める / 含めない
     end
     VM->>LOG: 録画開始操作とincludeMicrophone
-    VM->>VM: Whisper実ファイルと要約モデル選択を再確認
+    VM->>VM: Whisper実ファイルと、要約モデル選択または「要約を作成しない」を再確認
     VM->>FS: InProgress/<UUID>.partial.mp4 を準備
     VM->>RS: startRecording(stagingURL, includeMicrophone, ...)
     RS->>SC: 共有可能コンテンツ取得・ストリーム開始
@@ -164,15 +168,18 @@ sequenceDiagram
     VM->>FS: 保存先を再確認・再作成
     VM->>FS: .partial.mp4 を設定済み保存先へ移動
     VM->>PL: processRecording(finalizedRecordingURL)
-    PL->>WH: 日本語文字起こし
+    PL->>WH: 日本語文字起こし（-mc 0、Silero VAD）
     WH-->>PL: 文字起こし本文
     PL->>FS: 文字起こしMarkdownを保存
 
-    PL->>OL: 日本語要約を要求
-    OL-->>PL: 会議タイトル・要約本文
-    PL->>FS: 要約Markdownを保存
-
-    PL->>FS: 録画を日時＋会議名の完成名へ移動
+    alt 「要約を作成しない」がオフ
+        PL->>OL: 日本語要約を要求
+        OL-->>PL: 会議タイトル・要約本文
+        PL->>FS: 要約Markdownを保存
+        PL->>FS: 録画を日時＋会議名の完成名へ移動
+    else 「要約を作成しない」がオン
+        PL->>FS: 録画・文字起こしを日時＋ID先頭8桁の名前へ移動
+    end
     PL-->>VM: PipelineResult
     VM->>LOG: パイプライン完了
     VM-->>User: 完了表示・ローカル通知
@@ -183,9 +190,9 @@ sequenceDiagram
 | フェーズ | 主な実装 | 責務 |
 |---|---|---|
 | 起動 | `MeetingScribeApp`、`FirstLaunchTriggerView` | メニューバー常駐、Sparkle開始、未完了なら初回必須セットアップを表示、通知権限要求 |
-| 初回設定 | `FirstLaunchGuidanceView`、`InitialSetupViewModel` | 保存先・必須の画面収録権限・任意のマイク権限を確認し、推奨WhisperモデルとMacに応じたGemma 4を取得・選択するまで完了を許可しない |
+| 初回設定 | `FirstLaunchGuidanceView`、`InitialSetupViewModel` | 保存先・必須の画面収録権限・任意のマイク権限を確認し、推奨WhisperモデルとMacに応じたGemma 4を取得・選択するまで完了を許可しない。要約ステップで「要約を作成しない」を選んだ場合はGemma 4なしで完了する |
 | 対象選択 | `MenuBarViewModel.loadShareableContent()` | 画面・ウィンドウ一覧の取得とUI用モデルへの変換 |
-| 録画開始前 | `MenuBarViewModel.startRecording()` | マイク設定を解決し、選択済みWhisperモデルの実ファイル、選択済み要約モデル、保存先、必要な権限を確認して作業ファイルのURLを準備 |
+| 録画開始前 | `MenuBarViewModel.startRecording()` | マイク設定を解決し、選択済みWhisperモデルの実ファイル、選択済み要約モデル（「要約を作成しない」がオンなら不要）、保存先、必要な権限を確認して作業ファイルのURLを準備。「要約を作成しない」の値を録画単位で保持 |
 | 録画開始 | `RecordingService.startRecording()` | マイク選択に応じたキャプチャフィルタ、解像度、SCStream、AVAssetWriterの構築 |
 | 録画中 | `RecordingStreamOutput` | 映像とシステム音声、選択時のみマイク音声のタイムスタンプ補正、H.264/AAC書き込み |
 | ウィンドウ監視 | `RecordingService.pollWindowExistence()` | ScreenCaptureKit終了通知が来ない場合のフォールバックとして、2秒間隔で対象ウィンドウの存在を確認。別Spaceのウィンドウも存在対象に含める |
@@ -193,7 +200,8 @@ sequenceDiagram
 | 録画停止 | `RecordingService.stopRecording()` | キャプチャ停止、キューのドレイン、Writerの正常終了 |
 | 予期しない停止 | `RecordingStreamDelegate`、`handleStreamStoppedUnexpectedly()` | システム側停止やウィンドウ閉鎖時にも録画ファイルを可能な限り確定 |
 | 録画ファイル確定 | `MenuBarViewModel.finalizeRecording()` | 消えた保存先を再作成し、Application Supportの作業ファイルを設定済み保存先へ移動 |
-| 後処理 | `RecordingPipeline.processRecording()` | 全音声トラックの合成、Whisper文字起こし、Ollama要約、チェックポイント、録画・Markdownの完成名への移動・保存 |
+| 後処理 | `RecordingPipeline.processRecording()` | 全音声トラックの合成、Whisper文字起こし、Ollama要約（ジョブの「要約を作成しない」がオンなら省略）、チェックポイント、録画・Markdownの完成名への移動・保存 |
+| 要約の作成・やり直し | `RecordingPipeline.resummarize()`、`MenuBarViewModel.resummarize()` | 録画履歴の保存済み文字起こしから要約を作成（要約なしの録画）またはやり直し、既存ファイル名の日時部分を保ったまま会議名へ付け替え |
 | 後処理の復旧 | `PipelineJobStore`、`MenuBarViewModel` | ジョブと保存先Bookmarkを永続化し、スリープ・終了・クラッシュ後に未完了フェーズから再開 |
 | 録画履歴 | `RecordingHistoryStore`、`MenuBarViewModel` | 録画ごとの履歴JSONとファイルBookmarkをApplication Supportへ永続化し、保存先変更後も過去の録画を表示 |
 | UI状態と通知 | `MenuBarViewModel` | 録画・パイプライン状態、エラー表示、完了通知 |
@@ -246,9 +254,9 @@ Writerの正常終了後、設定済み保存先が録画中に削除されて�
 
 ## 録画後パイプライン
 
-作業ファイルを設定済み保存先へ移動できた時点で、UI上の新しい録画操作を妨げない独立した `Task` による後処理を開始します。録画開始前に選択済みWhisperモデルの実ファイルと選択済み要約モデルを必須とし、存在しない `default` モデルへのフォールバックや要約のスキップは行いません。
+作業ファイルを設定済み保存先へ移動できた時点で、UI上の新しい録画操作を妨げない独立した `Task` による後処理を開始します。録画開始前に選択済みWhisperモデルの実ファイルと、選択済み要約モデルを必須とします。設定の「要約を作成しない」がオンの録画だけは要約モデルを必須とせず、要約を省略します。存在しない `default` モデルへのフォールバックは行いません。
 
-ジョブは開始前に `PipelineJobStore` へ保存します。保存内容はジョブID、録画パス、録画日時、録画時点で選択されていたWhisper/Ollamaモデル、保存先パスとSecurity-Scoped Bookmark、現在フェーズとフェーズ更新時刻です。設定が後から変更されても、未完了ジョブは録画時点のモデルと保存先で再開します。
+ジョブは開始前に `PipelineJobStore` へ保存します。保存内容はジョブID、録画パス、録画日時、録画時点で選択されていたWhisper/Ollamaモデル、録画開始時の「要約を作成しない」の値、保存先パスとSecurity-Scoped Bookmark、現在フェーズとフェーズ更新時刻です。設定が後から変更されても、未完了ジョブは録画時点のモデル・要約の有無・保存先で再開します。「要約を作成しない」の値を持たない旧バージョンのジョブは要約します。
 
 ```text
 ~/Library/Application Support/MeetingScribe/PipelineJobs/
@@ -261,8 +269,9 @@ Writerの正常終了後、設定済み保存先が録画中に削除されて�
 
 1. 出力フォルダへのSecurity-Scoped Accessを取得
 2. 録画の全音声トラック（システム音声、選択時のみマイク音声）をモノラルへ合成し、WAVをストリーミング抽出
-3. 選択済みモデルでWhisper CLIを `-l ja` として実行し、日本語で文字起こし
+3. 選択済みモデルでWhisper CLIを `-l ja -mc 0 --vad -vm <同梱のggml-silero-v6.2.0.bin>` として実行し、日本語で文字起こし。無音区間はSilero VADでWhisperへ渡さず、前の区間の文字をプロンプトへ引き継がない
 4. 文字起こし本文をチェックポイントへ保存し、固有ジョブID付きの文字起こしMarkdownも先に保存
+   - ジョブの「要約を作成しない」がオンなら、録画と文字起こしを `<日時>_<ジョブID先頭8桁>` の名前で保存して10へ進む。要約ファイルは作らない
 5. Ollamaから選択済みモデルのコンテキスト長を取得
 6. 文字起こしが安全な入力長を超える場合は部分要約し、必要に応じて中間要約も再分割して段階的に統合
 7. 統合した会議内容を、発言にない決定・担当・期限・次の行動を補完せず、全体概要と話題別の本文に整理する日本語固定プロンプトで最終要約
@@ -279,7 +288,7 @@ Whisper起動中はジョブ作業領域へPIDを記録します。アプリが�
 
 設定画面では最大コンテキスト長をユーザーに指定させません。`SummaryService` がOllamaの `POST /api/show` からモデル固有のコンテキスト長を取得し、プロンプトと生成出力の予約領域を差し引いた安全なUTF-8バイト数で入力を分割します。各部分は質問と回答、合意、未確定の内容を発言の確度のまま要点化します。その合計がまだ上限を超える場合も同じ制約で再度グループ化・圧縮するため、会議時間や文字起こし量によって入力長超過エラーをユーザーへ返さない構造です。最終結果は会議全体の概要と話題別の番号付き本文へ整理し、発言にない決定事項やアクションを補完しません。ローカルで同一モデルを並列実行するとメモリ競合が起きやすいため、部分要約は順次実行します。
 
-録画停止ごとに `PipelineJob` を追加し、文字起こし・要約・保存の3工程、完了済み工程、現在工程の経過時間、失敗の状態をメニューバーの「録画」セクションへ表示します。経過時間は実際の処理割合として扱わず、現在の工程が継続中であることを示します。複数の録画後処理は独立したタスクとして並行実行され、進行中・再開待ち・失敗の項目を録画履歴の上で確認できます。完了ジョブは重複表示せず、永続化された録画履歴へ統合し、録画日時・会議名・文字起こし/要約の有無を表示します。履歴項目からFinderで録画ファイルを開けます。失敗時は対象ジョブへエラーメッセージを表示し、診断ログへエラーのdomain、code、descriptionを残します。
+録画停止ごとに `PipelineJob` を追加し、文字起こし・要約・保存の3工程（要約なしのジョブは文字起こし・保存の2工程、要約の作成・やり直しは要約・保存の2工程）、完了済み工程、現在工程の経過時間、失敗の状態をメニューバーの「録画」セクションへ表示します。経過時間は実際の処理割合として扱わず、現在の工程が継続中であることを示します。複数の録画後処理は独立したタスクとして並行実行され、進行中・再開待ち・失敗の項目を録画履歴の上で確認できます。完了ジョブは重複表示せず、永続化された録画履歴へ統合し、録画日時・会議名・文字起こし/要約の有無を表示します。履歴項目からFinderで録画ファイルを開けます。文字起こしが残っている履歴項目からは、要約が無ければ要約を作成し、あればやり直せます。どちらも現在の保存先設定ではなく既存ファイルのある場所で、日時部分を保ったまま会議名へ付け替えます。失敗時は対象ジョブへエラーメッセージを表示し、診断ログへエラーのdomain、code、descriptionを残します。
 
 ## 診断ログ
 
