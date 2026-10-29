@@ -6,3 +6,6 @@ whisper.cpp/
 
 # Xcode ユーザー固有（スキーム管理など）。共有は xcshareddata のみ。
 **/xcuserdata/
+
+# scripts/release.sh の Release ビルド
+build/
