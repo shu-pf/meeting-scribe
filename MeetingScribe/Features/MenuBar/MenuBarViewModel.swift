@@ -51,6 +51,8 @@ struct PipelineJob: Identifiable, Equatable {
     var statusUpdatedAt: Date
     /// 保存済みの文字起こしから要約だけをやり直すジョブか
     var isResummarize: Bool = false
+    /// 要約を作らず、文字起こしまでで終えるジョブか
+    var skipsSummary: Bool = false
 }
 
 /// 永続ストアから復元した録画履歴
@@ -65,7 +67,7 @@ struct RecordingHistoryItem: Identifiable, Equatable {
     let transcriptURL: URL?
     let summaryURL: URL?
 
-    /// 保存済みの文字起こしが残っていれば、要約だけをやり直せる
+    /// 保存済みの文字起こしが残っていれば、要約だけをやり直せる（要約が無ければ作成できる）
     var canResummarize: Bool {
         hasTranscript && transcriptURL != nil
     }
@@ -111,6 +113,8 @@ final class MenuBarViewModel: ObservableObject {
     @Published private(set) var isWhisperModelReady = false
     /// 要約モデルが選択済みか
     @Published private(set) var isSummaryModelSet = false
+    /// 設定の「要約を作成しない」がオンか
+    @Published private(set) var skipsSummary = false
     @Published var isShowingMicrophoneChoice = false
     @Published private(set) var isPreparingRecording = false
 
@@ -125,6 +129,8 @@ final class MenuBarViewModel: ObservableObject {
     private var recordingSecurityScopedDirectory: URL?
     /// 録画完了後に作業領域から移動する最終保存先
     private var recordingDestinationURL: URL?
+    /// 録画開始時の「要約を作成しない」設定。録画後のジョブへ引き継ぐ。
+    private var recordingSkipsSummary = false
     private var persistedPipelineJobs: [UUID: PersistedPipelineJob] = [:]
     private var pipelineTasks: [UUID: Task<Void, Never>] = [:]
     private var hasRestoredPipelineJobs = false
@@ -147,7 +153,7 @@ final class MenuBarViewModel: ObservableObject {
     var canStartRecording: Bool {
         isOutputDirectorySet
             && isWhisperModelReady
-            && isSummaryModelSet
+            && (isSummaryModelSet || skipsSummary)
             && !isPreparingRecording
     }
 
@@ -219,7 +225,7 @@ final class MenuBarViewModel: ObservableObject {
                     return
                 }
                 await refreshSummaryModelSelection()
-                guard isSummaryModelSet else {
+                guard isSummaryModelSet || skipsSummary else {
                     errorMessage = "要約モデルを設定してください。"
                     diagnosticLog.warning("録画開始を中断: 要約モデル未設定")
                     return
@@ -241,6 +247,7 @@ final class MenuBarViewModel: ObservableObject {
                     .appendingPathComponent(UUID().uuidString)
                     .appendingPathExtension("partial.mp4")
                 recordingDestinationURL = destinationURL
+                recordingSkipsSummary = skipsSummary
                 try await recording.startRecording(
                     displayID: selectedDisplayID,
                     windowID: selectedWindowID,
@@ -283,7 +290,10 @@ final class MenuBarViewModel: ObservableObject {
                 errorMessage = nil
                 // 録画用のセキュリティスコープを解放し、パイプライン専用に新たに取得する
                 releaseRecordingSecurityScopedDirectory()
-                runPipelineInBackground(fileURL: fileURL)
+                runPipelineInBackground(
+                    fileURL: fileURL,
+                    skipsSummary: recordingSkipsSummary
+                )
                 diagnosticLog.info("録画停止成功 fileURL=\(fileURL.path)")
             } catch {
                 isRecording = false
@@ -374,7 +384,10 @@ final class MenuBarViewModel: ObservableObject {
                 diagnosticLog.warning(
                     "録画ストリームが予期せず停止 fileURL=\(fileURL.path)"
                 )
-                runPipelineInBackground(fileURL: fileURL)
+                runPipelineInBackground(
+                    fileURL: fileURL,
+                    skipsSummary: recordingSkipsSummary
+                )
             } catch {
                 recordingDestinationURL = nil
                 errorMessage = error.localizedDescription
@@ -397,10 +410,15 @@ final class MenuBarViewModel: ObservableObject {
     }
 
     /// 要約完了時にローカル通知を送信する
-    private func sendCompletionNotification(title: String) {
+    private func sendCompletionNotification(title: String, hasSummary: Bool) {
         let content = UNMutableNotificationContent()
-        content.title = "会議の要約が完了しました"
-        content.body = title
+        if hasSummary {
+            content.title = "会議の要約が完了しました"
+            content.body = title
+        } else {
+            content.title = "会議の文字起こしが完了しました"
+            content.body = "録画履歴から要約を作成できます。"
+        }
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
@@ -413,7 +431,9 @@ final class MenuBarViewModel: ObservableObject {
     private func sendMaximumDurationNotification() {
         let content = UNMutableNotificationContent()
         content.title = "5時間の上限に達しました"
-        content.body = "録画を自動終了しています。完了後に文字起こしと要約を開始します。"
+        content.body = recordingSkipsSummary
+            ? "録画を自動終了しています。完了後に文字起こしを開始します。"
+            : "録画を自動終了しています。完了後に文字起こしと要約を開始します。"
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
@@ -424,14 +444,15 @@ final class MenuBarViewModel: ObservableObject {
     }
 
     /// パイプライン処理をバックグラウンドで実行する。新しい録画の開始に影響されない独立した Task として動かす。
-    private func runPipelineInBackground(fileURL: URL) {
+    private func runPipelineInBackground(fileURL: URL, skipsSummary: Bool) {
         let jobID = UUID()
         let createdAt = Date()
         let job = PipelineJob(
             id: jobID,
             createdAt: createdAt,
             status: .waiting,
-            statusUpdatedAt: createdAt
+            statusUpdatedAt: createdAt,
+            skipsSummary: skipsSummary
         )
         pipelineJobs.insert(job, at: 0)
         trimFinishedPipelineJobs()
@@ -440,8 +461,11 @@ final class MenuBarViewModel: ObservableObject {
             guard let self else { return }
             do {
                 guard let outputDirectory = await settings.outputDirectoryURL,
-                      let whisperModelID = await settings.selectedWhisperModelID,
-                      let summaryModelID = await settings.selectedSummaryModelID else {
+                      let whisperModelID = await settings.selectedWhisperModelID else {
+                    throw PipelineJobPreparationError.settingsUnavailable
+                }
+                let summaryModelID = await settings.selectedSummaryModelID ?? ""
+                if !skipsSummary, summaryModelID.isEmpty {
                     throw PipelineJobPreparationError.settingsUnavailable
                 }
                 let recordingDate =
@@ -464,7 +488,8 @@ final class MenuBarViewModel: ObservableObject {
                     summaryModelID: summaryModelID,
                     state: .waiting,
                     stateUpdatedAt: createdAt,
-                    detail: nil
+                    detail: nil,
+                    skipsSummary: skipsSummary
                 )
                 persistedPipelineJobs[jobID] = persistedJob
                 try await pipelineJobStore.upsert(persistedJob)
@@ -483,7 +508,7 @@ final class MenuBarViewModel: ObservableObject {
         pipelineTasks[jobID] = task
     }
 
-    /// 保存済みの文字起こしを使って要約だけをやり直す。会議名でファイル名も付け替える。
+    /// 保存済みの文字起こしを使って要約だけをやり直す（要約が無い録画では作成する）。会議名でファイル名も付け替える。
     func resummarize(_ item: RecordingHistoryItem) {
         guard let transcriptURL = item.transcriptURL, item.canResummarize else {
             errorMessage = "文字起こしファイルが見つからないため、要約をやり直せません。"
@@ -676,7 +701,8 @@ final class MenuBarViewModel: ObservableObject {
                     outputDirectoryURL: outputDirectory,
                     recordingDate: job.recordingDate,
                     whisperModelID: job.whisperModelID,
-                    summaryModelID: job.summaryModelID
+                    summaryModelID: job.summaryModelID,
+                    skipsSummary: job.skipsSummary ?? false
                 )
                 result = try await pipeline.processRecording(
                     request: request
@@ -703,7 +729,10 @@ final class MenuBarViewModel: ObservableObject {
                 "録画後パイプライン完了 title=\(result.meetingTitle)"
             )
             await refreshRecordingHistory()
-            sendCompletionNotification(title: result.meetingTitle)
+            sendCompletionNotification(
+                title: result.meetingTitle,
+                hasSummary: result.summaryURL != nil
+            )
         } catch {
             if Task.isCancelled {
                 await updatePersistedPipelineJob(
@@ -805,7 +834,8 @@ final class MenuBarViewModel: ObservableObject {
             createdAt: persisted.createdAt,
             status: status,
             statusUpdatedAt: persisted.stateUpdatedAt ?? persisted.createdAt,
-            isResummarize: persisted.isResummarize
+            isResummarize: persisted.isResummarize,
+            skipsSummary: persisted.skipsSummary ?? false
         )
     }
 
@@ -838,6 +868,7 @@ final class MenuBarViewModel: ObservableObject {
     }
 
     private func refreshSummaryModelSelection() async {
+        skipsSummary = await settings.skipsSummary
         guard let modelID = await settings.selectedSummaryModelID else {
             isSummaryModelSet = false
             return

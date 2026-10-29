@@ -66,7 +66,8 @@ struct FirstLaunchGuidanceView: View {
             InitialSetupCompleteStep(
                 outputDirectoryPath: viewModel.outputDirectoryPath,
                 recommendation: viewModel.recommendation,
-                hasMicrophonePermission: viewModel.hasMicrophonePermission
+                hasMicrophonePermission: viewModel.hasMicrophonePermission,
+                skipsSummary: viewModel.skipsSummary
             )
         }
     }
@@ -409,6 +410,18 @@ private struct InitialSetupSummaryStep: View {
                 InitialSetupErrorMessage(message: message)
             }
 
+            if !viewModel.isSummaryModelInstalled, !viewModel.isDownloadingSummaryModel {
+                VStack(alignment: .leading, spacing: 4) {
+                    Button("要約を作成せずに文字起こしだけ使う") {
+                        Task { await viewModel.skipSummaryModel() }
+                    }
+                    .buttonStyle(.link)
+                    Text("要約は設定からあとで有効にでき、録画履歴から作成することもできます。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             if viewModel.requiresOllamaUpdate {
                 InitialSetupInformationCard(
                     title: "Ollamaを最新版へ更新してください",
@@ -449,6 +462,7 @@ private struct InitialSetupCompleteStep: View {
     let outputDirectoryPath: String
     let recommendation: InitialSetupRecommendation
     let hasMicrophonePermission: Bool
+    let skipsSummary: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -465,14 +479,18 @@ private struct InitialSetupCompleteStep: View {
                 lines: [
                     "保存先: \(outputDirectoryPath)",
                     "文字起こし: \(InitialSetupRecommendation.whisperModelID)",
-                    "要約: \(recommendation.summaryModelID)",
+                    skipsSummary
+                        ? "要約: 作成しない（設定から変更できます）"
+                        : "要約: \(recommendation.summaryModelID)",
                     "画面収録: 許可済み",
                     "マイク: \(hasMicrophonePermission ? "許可済み" : "未許可（必要時に確認）")",
                 ]
             )
 
             Text(
-                "録画終了後、文字起こしと要約はバックグラウンドで進みます。"
+                (skipsSummary
+                    ? "録画終了後、文字起こしはバックグラウンドで進みます。"
+                    : "録画終了後、文字起こしと要約はバックグラウンドで進みます。")
                 + "複数の処理状況と過去の録画はメニューバーから確認できます。"
             )
             .foregroundStyle(.secondary)
