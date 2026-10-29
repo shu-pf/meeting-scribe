@@ -4,7 +4,7 @@
 //
 //  同梱 Whisper CLI 仕様: docs/WHISPER_CLI.md
 //  起動パス: Bundle.main/Contents/Resources/whisper
-//  引数: -m <モデル.bin> -otxt -l ja <入力WAV>
+//  引数: -m <モデル.bin> -otxt -l ja -mc 0 --vad -vm <VADモデル.bin> <入力WAV>
 //  出力: 標準出力にテキスト
 //  モデル ID が ElevenLabsScribe.modelID のときは WAV を ElevenLabs Scribe v2 に送る
 //
@@ -62,6 +62,12 @@ final class TranscriptionService: TranscriptionServiceProtocol {
                 transcriptionLogger().error("whisper バイナリ不在 path=\(whisperURL.path, privacy: .public)")
                 throw TranscriptionError.whisperBinaryNotFound
             }
+        }
+        let vadModelURL = whisperURL.deletingLastPathComponent()
+            .appendingPathComponent("ggml-silero-v6.2.0.bin")
+        guard FileManager.default.fileExists(atPath: vadModelURL.path) else {
+            transcriptionLogger().error("VAD モデル不在 path=\(vadModelURL.path, privacy: .public)")
+            throw TranscriptionError.vadModelNotFound
         }
 
         let tmpDir = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -161,6 +167,12 @@ final class TranscriptionService: TranscriptionServiceProtocol {
             "-m", modelPathResolved,
             "-otxt",
             "-l", "ja",
+            // 無音区間で出る定番の幻覚（「ご視聴ありがとうございました」など）を、
+            // 前の区間の文字としてプロンプトへ引き継がない。
+            "-mc", "0",
+            // 無音区間をWhisperへ渡さず、幻覚そのものを出さない。
+            "--vad",
+            "-vm", vadModelURL.path,
             wavFileName,
         ]
         transcriptionLogger().info("Process 起動 executable=\(whisperURL.path, privacy: .public) cwd=\(wavDir.path, privacy: .public) args=\(process.arguments ?? [], privacy: .public)")
@@ -297,6 +309,7 @@ final class TranscriptionService: TranscriptionServiceProtocol {
 enum TranscriptionError: LocalizedError {
     case modelNotFound(String)
     case whisperBinaryNotFound
+    case vadModelNotFound
     case outputEncodingFailed
     case processFailed(exitCode: Int, stderr: String?)
     case cloudAPIKeyMissing
@@ -308,6 +321,8 @@ enum TranscriptionError: LocalizedError {
             return "文字起こし用のモデル「\(id)」が見つかりません。設定でモデルをダウンロードしてください。"
         case .whisperBinaryNotFound:
             return "Whisper の実行ファイルが見つかりません。scripts/build_whisper.sh を実行してバイナリを用意してください。"
+        case .vadModelNotFound:
+            return "無音検出（VAD）のモデルが見つかりません。scripts/build_whisper.sh を実行してモデルを用意してください。"
         case .outputEncodingFailed:
             return "文字起こし結果の取得に失敗しました。"
         case .processFailed(let code, let stderr):
