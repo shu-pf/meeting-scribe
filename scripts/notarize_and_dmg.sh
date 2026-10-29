@@ -31,11 +31,16 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="${NOTARY_ENV_FILE:-$REPO_ROOT/.env}"
+# 呼び出し側（scripts/release.sh など）が渡した APP_VERSION を .env より優先する
+APP_VERSION_FROM_CALLER="${APP_VERSION:-}"
 if [[ -f "$ENV_FILE" ]]; then
   set -a
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
+fi
+if [[ -n "$APP_VERSION_FROM_CALLER" ]]; then
+  APP_VERSION="$APP_VERSION_FROM_CALLER"
 fi
 
 # APP_VERSION があるとき、appcast 用（DOWNLOAD_URL_PREFIX 未指定なら GitHub Releases を仮定）
