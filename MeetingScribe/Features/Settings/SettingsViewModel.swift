@@ -13,6 +13,7 @@ final class SettingsViewModel: ObservableObject {
     @Published var outputDirectoryPath: String = ""
     @Published var selectedWhisperModelID: String = ""
     @Published var selectedSummaryModelID: String = ""
+    @Published var skipsSummary: Bool = false
     @Published var microphoneRecordingPreference: MicrophoneRecordingPreference =
         .askEveryTime
     @Published var launchAtLogin: Bool = false
@@ -57,6 +58,7 @@ final class SettingsViewModel: ObservableObject {
         }
         selectedWhisperModelID = await settings.selectedWhisperModelID ?? ""
         selectedSummaryModelID = await settings.selectedSummaryModelID ?? ""
+        skipsSummary = await settings.skipsSummary
         microphoneRecordingPreference =
             await settings.microphoneRecordingPreference
         if #available(macOS 13.0, *) {
@@ -116,6 +118,11 @@ final class SettingsViewModel: ObservableObject {
     func setSelectedSummaryModelID(_ id: String) async {
         await settings.setSelectedSummaryModelID(id.isEmpty ? nil : id)
         selectedSummaryModelID = id
+    }
+
+    func setSkipsSummary(_ value: Bool) async {
+        await settings.setSkipsSummary(value)
+        skipsSummary = value
     }
 
     func setMicrophoneRecordingPreference(

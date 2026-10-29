@@ -36,10 +36,15 @@ private enum PipelineJobStoreCheck {
                 decodedLegacy.stateUpdatedAt == nil,
                 "旧形式のジョブを読み込めませんでした"
             )
+            try require(
+                decodedLegacy.skipsSummary == nil,
+                "旧形式のジョブが要約なしとして読み込まれました"
+            )
 
             let stateUpdatedAt = Date(timeIntervalSinceReferenceDate: 200)
             var current = decodedLegacy
             current.stateUpdatedAt = stateUpdatedAt
+            current.skipsSummary = true
             let store = PipelineJobStore(
                 baseDirectory: root,
                 fileManager: fileManager
@@ -53,8 +58,12 @@ private enum PipelineJobStoreCheck {
                 loaded[0].stateUpdatedAt == stateUpdatedAt,
                 "フェーズ更新時刻が永続化されませんでした"
             )
+            try require(
+                loaded[0].skipsSummary == true,
+                "要約なしの設定が永続化されませんでした"
+            )
 
-            print("PASS: 旧ジョブ互換性とフェーズ更新時刻の永続化")
+            print("PASS: 旧ジョブ互換性とフェーズ更新時刻・要約なし設定の永続化")
         } catch {
             fputs("FAIL: \(error.localizedDescription)\n", stderr)
             Foundation.exit(1)

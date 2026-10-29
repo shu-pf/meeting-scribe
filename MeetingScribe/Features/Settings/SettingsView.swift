@@ -175,6 +175,15 @@ private struct ModelSettingsTab: View {
             }
 
             Section("要約（LLM）") {
+                Toggle(
+                    "要約を作成しない",
+                    isOn: Binding(
+                        get: { viewModel.skipsSummary },
+                        set: { value in
+                            Task { await viewModel.setSkipsSummary(value) }
+                        }
+                    )
+                )
                 Picker(
                     "モデル",
                     selection: Binding(
@@ -191,9 +200,14 @@ private struct ModelSettingsTab: View {
                         Text(id).tag(id)
                     }
                 }
-                Text("長い文字起こしは自動的に分割・統合して要約します。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .disabled(viewModel.skipsSummary)
+                Text(
+                    viewModel.skipsSummary
+                        ? "録画と文字起こしだけを保存します。要約は録画履歴から後で作成できます。"
+                        : "長い文字起こしは自動的に分割・統合して要約します。"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

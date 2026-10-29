@@ -69,7 +69,10 @@ private enum ResummarizeCheck {
                 throw CheckError.baseNameNotRenamed(newBaseName)
             }
 
-            for url in [result.recordingURL, result.transcriptURL, result.summaryURL] {
+            guard let resultSummaryURL = result.summaryURL else {
+                throw CheckError.missingOutput("要約")
+            }
+            for url in [result.recordingURL, result.transcriptURL, resultSummaryURL] {
                 guard fileManager.fileExists(atPath: url.path) else {
                     throw CheckError.missingOutput(url.lastPathComponent)
                 }
@@ -81,7 +84,7 @@ private enum ResummarizeCheck {
             }
 
             let summaryText = try String(
-                contentsOf: result.summaryURL,
+                contentsOf: resultSummaryURL,
                 encoding: .utf8
             )
             let body = summaryText.replacingOccurrences(

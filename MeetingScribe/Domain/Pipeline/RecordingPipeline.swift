@@ -11,7 +11,8 @@ struct PipelineResult: Sendable {
     let meetingTitle: String
     let recordingURL: URL
     let transcriptURL: URL
-    let summaryURL: URL
+    /// 要約を作成しなかったときは nil
+    let summaryURL: URL?
 }
 
 struct PipelineRequest: Sendable {
@@ -21,6 +22,8 @@ struct PipelineRequest: Sendable {
     let recordingDate: Date
     let whisperModelID: String
     let summaryModelID: String
+    /// true のとき要約を作らず、録画と文字起こしだけを保存する
+    let skipsSummary: Bool
 }
 
 /// 保存済みの文字起こしから要約だけをやり直す要求
@@ -64,6 +67,8 @@ protocol RecordingPipelineProtocol: Sendable {
 final class RecordingPipeline: RecordingPipelineProtocol {
     private let diagnosticLog = DiagnosticLogger(category: "Pipeline")
     private static let transcriptHeading = "# 文字起こし\n\n"
+    /// 要約を作成しなかった録画の会議名
+    static let untitledMeetingTitle = "要約なし"
 
     private static let baseNameDateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -147,6 +152,15 @@ final class RecordingPipeline: RecordingPipelineProtocol {
         )
         let markdownTranscript = "\(Self.transcriptHeading)\(transcript)"
         try markdownTranscript.write(to: earlyTranscriptURL, atomically: true, encoding: .utf8)
+
+        if request.skipsSummary {
+            return try await saveWithoutSummary(
+                request: request,
+                markdownTranscript: markdownTranscript,
+                earlyTranscriptURL: earlyTranscriptURL,
+                onProgress: onProgress
+            )
+        }
 
         // 3. 要約 → タイトル取得
         guard !request.summaryModelID.trimmingCharacters(
@@ -237,6 +251,58 @@ final class RecordingPipeline: RecordingPipelineProtocol {
             recordingURL: recordingDestURL,
             transcriptURL: transcriptURL,
             summaryURL: summaryURL
+        )
+    }
+
+    /// 要約を作らずに、録画と文字起こしを `<日時>_<ID先頭8桁>` の名前で保存する。
+    /// 会議名は後で録画履歴から要約を作成したときに付け替える。
+    private func saveWithoutSummary(
+        request: PipelineRequest,
+        markdownTranscript: String,
+        earlyTranscriptURL: URL,
+        onProgress: @escaping @Sendable (PipelineProgress) async -> Void
+    ) async throws -> PipelineResult {
+        await onProgress(.saving)
+        let fileManager = FileManager.default
+        let fileURL = request.fileURL
+        let outputDir = request.outputDirectoryURL
+        let ext = fileURL.pathExtension.isEmpty ? "mp4" : fileURL.pathExtension
+        let dateString = Self.baseNameDateFormatter.string(from: request.recordingDate)
+        let baseName = Self.availableBaseName(
+            "\(dateString)_\(request.id.uuidString.prefix(8))",
+            sourceURL: fileURL,
+            outputDirectory: outputDir,
+            extension: ext,
+            fileManager: fileManager
+        )
+
+        let recordingDestURL = Self.nfcFileURL(
+            fileName: "\(baseName).\(ext)",
+            in: outputDir
+        )
+        if fileURL.standardizedFileURL.path != recordingDestURL.standardizedFileURL.path {
+            if fileManager.fileExists(atPath: fileURL.path) {
+                try Self.moveItemNFC(at: fileURL, to: recordingDestURL)
+            } else if !fileManager.fileExists(atPath: recordingDestURL.path) {
+                throw RecordingPipelineError.recordingNotFound(fileURL.path)
+            }
+        }
+
+        let transcriptURL = Self.nfcFileURL(
+            fileName: "\(baseName)_transcript.md",
+            in: outputDir
+        )
+        try Self.writeNFC(markdownTranscript, to: transcriptURL)
+        if earlyTranscriptURL.standardizedFileURL != transcriptURL.standardizedFileURL {
+            try? fileManager.removeItem(at: earlyTranscriptURL)
+        }
+
+        diagnosticLog.info("パイプライン処理完了（要約なし） baseName=\(baseName)")
+        return PipelineResult(
+            meetingTitle: Self.untitledMeetingTitle,
+            recordingURL: recordingDestURL,
+            transcriptURL: transcriptURL,
+            summaryURL: nil
         )
     }
 

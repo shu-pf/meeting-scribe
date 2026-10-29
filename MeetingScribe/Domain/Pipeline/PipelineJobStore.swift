@@ -42,6 +42,9 @@ nonisolated struct PersistedPipelineJob: Codable, Identifiable, Sendable {
     var resummarizePreviousSummaryPath: String?
     /// やり直し対象の録画履歴ID。完了時に新しい履歴を作らず、この履歴を更新する。
     var historyItemID: UUID?
+    /// 録画開始時の「要約を作成しない」設定。再開時に設定が変わっていても挙動を変えない。
+    /// この項目が無い旧バージョンのジョブは nil（要約する）。
+    var skipsSummary: Bool?
 
     var isResummarize: Bool {
         resummarizeTranscriptPath != nil

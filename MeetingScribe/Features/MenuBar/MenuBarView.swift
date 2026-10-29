@@ -83,7 +83,8 @@ struct MenuBarView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if !viewModel.isRecording, !viewModel.isSummaryModelSet {
+            if !viewModel.isRecording, !viewModel.isSummaryModelSet,
+               !viewModel.skipsSummary {
                 Label(
                     "要約モデルを設定してください。",
                     systemImage: "text.badge.plus"
@@ -277,19 +278,31 @@ private struct RecordingsView: View {
                                     ProgressView()
                                         .controlSize(.small)
                                         .accessibilityLabel(
-                                            "\(item.title)の要約をやり直し中"
+                                            item.hasSummary
+                                                ? "\(item.title)の要約をやり直し中"
+                                                : "\(item.title)の要約を作成中"
                                         )
                                 } else if item.canResummarize {
                                     Button {
                                         onResummarize(item)
                                     } label: {
-                                        Image(systemName: "arrow.clockwise")
+                                        Image(
+                                            systemName: item.hasSummary
+                                                ? "arrow.clockwise"
+                                                : "text.badge.plus"
+                                        )
                                     }
                                     .buttonStyle(.plain)
                                     .accessibilityLabel(
-                                        "\(item.title)の要約をやり直す"
+                                        item.hasSummary
+                                            ? "\(item.title)の要約をやり直す"
+                                            : "\(item.title)の要約を作成"
                                     )
-                                    .help("文字起こしから要約をやり直す")
+                                    .help(
+                                        item.hasSummary
+                                            ? "文字起こしから要約をやり直す"
+                                            : "文字起こしから要約を作成"
+                                    )
                                 }
 
                                 if !item.isRecordingAvailable {
@@ -439,7 +452,8 @@ private struct PipelineJobRow: View {
             if isProcessing {
                 PipelineStageIndicator(
                     status: job.status,
-                    isResummarize: job.isResummarize
+                    isResummarize: job.isResummarize,
+                    skipsSummary: job.skipsSummary
                 )
 
                 Text(statusDetail)
@@ -516,8 +530,8 @@ private struct PipelineJobRow: View {
     }
 
     private var statusText: String {
-        // やり直しでは文字起こしを実行しないため、全2工程として数える。
-        let totalStages = job.isResummarize ? 2 : 3
+        // やり直しでは文字起こしを、要約なしでは要約を実行しないため、全2工程として数える。
+        let totalStages = job.isResummarize || job.skipsSummary ? 2 : 3
         switch job.status {
         case .waiting:
             return "再開待ち"
@@ -526,7 +540,7 @@ private struct PipelineJobRow: View {
         case .summarizing:
             return job.isResummarize ? "工程 1/2" : "工程 2/3"
         case .saving:
-            return job.isResummarize ? "工程 2/2" : "工程 3/3"
+            return "工程 \(totalStages)/\(totalStages)"
         case .completed:
             return "完了"
         case .failed:
@@ -545,9 +559,13 @@ private struct PipelineJobRow: View {
                 ? "保存済みの文字起こしから会議内容を整理して要約しています。"
                 : "文字起こしから会議内容を整理して要約しています。"
         case .saving:
-            job.isResummarize
-                ? "新しい会議名でファイル名を付け替えています。"
-                : "録画・文字起こし・要約を完成ファイルとして保存しています。"
+            if job.isResummarize {
+                "新しい会議名でファイル名を付け替えています。"
+            } else if job.skipsSummary {
+                "録画・文字起こしを完成ファイルとして保存しています。"
+            } else {
+                "録画・文字起こし・要約を完成ファイルとして保存しています。"
+            }
         case .completed:
             "すべての処理が完了しました。"
         case .failed:
@@ -587,6 +605,8 @@ private struct PipelineStageIndicator: View {
     let status: PipelineJobStatus
     /// 要約のやり直しでは文字起こし工程を実行しないため表示から省く
     var isResummarize = false
+    /// 要約なしでは要約工程を実行しないため表示から省く
+    var skipsSummary = false
 
     var body: some View {
         HStack(spacing: 5) {
@@ -600,14 +620,16 @@ private struct PipelineStageIndicator: View {
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }
-            PipelineStageView(
-                title: "要約",
-                state: state(for: 1)
-            )
-            Image(systemName: "chevron.right")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
+            if !skipsSummary {
+                PipelineStageView(
+                    title: "要約",
+                    state: state(for: 1)
+                )
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
             PipelineStageView(
                 title: "保存",
                 state: state(for: 2)
@@ -660,6 +682,20 @@ private struct PipelineStageIndicator: View {
                 return "要約のやり直しが完了"
             case .failed:
                 return "要約のやり直しに失敗"
+            }
+        }
+        if skipsSummary {
+            switch status {
+            case .waiting:
+                return "録画後処理は再開待ちです"
+            case .transcribing, .summarizing:
+                return "全2工程中1番目、文字起こしを実行中"
+            case .saving:
+                return "全2工程中2番目、文字起こしが完了、保存中"
+            case .completed:
+                return "録画後処理の全2工程が完了"
+            case .failed:
+                return "録画後処理に失敗"
             }
         }
         switch status {

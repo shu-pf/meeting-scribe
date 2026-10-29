@@ -81,6 +81,7 @@ final class InitialSetupViewModel {
     var summaryDownloadStatus = ""
     var summaryErrorMessage: String?
     var requiresOllamaUpdate = false
+    var skipsSummary = false
 
     let recommendation: InitialSetupRecommendation
 
@@ -122,7 +123,7 @@ final class InitialSetupViewModel {
         case .transcriptionModel:
             isWhisperModelInstalled
         case .summaryModel:
-            isSummaryModelInstalled
+            isSummaryModelInstalled || skipsSummary
         case .complete:
             false
         }
@@ -139,6 +140,7 @@ final class InitialSetupViewModel {
         let savedStepRawValue = await settings.initialSetupStepRawValue
         currentStep = InitialSetupStep(rawValue: savedStepRawValue) ?? .welcome
         outputDirectoryPath = await settings.outputDirectoryURL?.path ?? ""
+        skipsSummary = await settings.skipsSummary
         refreshPermissionStatuses()
         isWhisperModelInstalled = await whisperStore.localFileURL(
             forModelID: InitialSetupRecommendation.whisperModelID
@@ -153,6 +155,13 @@ final class InitialSetupViewModel {
         }
         await settings.setInitialSetupStepRawValue(next.rawValue)
         currentStep = next
+    }
+
+    /// 要約モデルを用意せずに、文字起こしだけで使い始める
+    func skipSummaryModel() async {
+        await settings.setSkipsSummary(true)
+        skipsSummary = true
+        await moveForward()
     }
 
     func moveBack() async {
@@ -327,6 +336,8 @@ final class InitialSetupViewModel {
                 recommendation.summaryModelID
             )
             isSummaryModelInstalled = true
+            await settings.setSkipsSummary(false)
+            skipsSummary = false
             summaryDownloadProgress = 1
             summaryDownloadStatus = "ダウンロードが完了しました"
         } catch is CancellationError {
