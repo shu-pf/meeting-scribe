@@ -20,6 +20,15 @@ env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 
 スキームは `"MeetingScribe - Debug"` / `"MeetingScribe - Release"`(引用符必須)。変更後は必ずビルドを通すこと。
 
+### 言語サーバー
+
+Claude Code はプロジェクト設定 (`.claude/settings.json`) の `swift-lsp` プラグインで SourceKit-LSP を使う。SourceKit-LSP は `.xcodeproj` を直接読めないため、`xcode-build-server` が生成する `buildServer.json` でビルド設定を渡す。`buildServer.json` は端末ごとのパスを含むので git に入れない。新しい端末では次を実行してから一度ビルドする。
+
+```sh
+brew install xcode-build-server
+xcode-build-server config -project MeetingScribe.xcodeproj -scheme "MeetingScribe - Debug"
+```
+
 ### Debug署名
 
 - 実際に起動して動作確認するDebugアプリは、Team `3R3JQ22JJF` の `Apple Development` 証明書で署名する
