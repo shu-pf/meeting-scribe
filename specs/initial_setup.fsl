@@ -1,0 +1,297 @@
+fsl 5
+// 初回セットアップ (オンボーディング) の手順と、設定への書き込みの設計仕様。
+// 判断は InitialSetupFlow と InitialSetupDownloadGate に集め、画面の開閉、権限・ファイル・Ollama の状態、
+// ダウンロードの Task は環境として扱う。
+//
+// ASSUME-1: 設定ウィンドウは 1 枚で、初回セットアップの画面 (ViewModel) は同時に 1 つまで。
+//           画面を閉じると ViewModel は捨てられ、開き直すと新しい ViewModel が保存済みの手順から読み込む。
+// ASSUME-2: 画面が覚えている値 (cDir, cPerm, cW, cS, cSkip) は、読み込み・確認の操作・ダウンロードの終わりにだけ
+//           環境から読み直す。保存先は「設定されていて、フォルダがある」を dir 1 つで表す。
+// ASSUME-3: 保存先フォルダの削除、権限の変更、モデルファイルの追加・削除、Ollama の起動・停止は、いつでも起こりうる。
+//           Debug 版と配布版は Whisper モデルの置き場所を共有し、設定は共有しないので、
+//           選ばれていないモデルファイルが先にあることがある (env_add_wfile)。
+// ASSUME-4: ダウンロードは画面を閉じても続き、アプリを終了すると止まる。終わったときの設定への書き込みは、
+//           画面があってもなくても行う。画面がある場合の読み直しは、終わりと同じ 1 手にまとめる。
+// ASSUME-5: 設定への書き込みは判断した順に反映される (ViewModel が 1 本の Task の列で書く)。
+// ASSUME-6: ダウンロードの同時数は 2 まで表す。2 本目が始まった時点で OneWhisperDownload / OneSummaryPull が破れる。
+// ASSUME-7: 完了の操作が読み直す値は、その 1 手の間に変わらない。
+spec InitialSetup {
+  type Step = 0..5
+  type Cnt = 0..2
+
+  state {
+    step: Step,      // flow.step (0 ようこそ, 1 保存先, 2 権限, 3 文字起こし, 4 要約, 5 完了)
+    saved: Step,     // 設定: initialSetupStepRawValue
+    done: Bool,      // flow.isFinished / 設定: hasSeenFirstLaunchGuidance
+    open: Bool,      // 環境: 画面 (ViewModel) がある
+    dir: Bool,       // 環境: 保存先が設定されていて、フォルダがある
+    perm: Bool,      // 環境: 画面収録の権限
+    wFile: Bool,     // 環境: おすすめの Whisper モデルのファイルがある
+    oll: Bool,       // 環境: Ollama に接続できる
+    sFile: Bool,     // 環境: おすすめの要約モデルが Ollama にある
+    wSel: Bool,      // 設定: おすすめの Whisper モデルが選ばれている
+    sSel: Bool,      // 設定: おすすめの要約モデルが選ばれている
+    skip: Bool,      // 設定: skipsSummary
+    cDir: Bool,      // flow.hasOutputDirectory
+    cPerm: Bool,     // flow.hasScreenCapturePermission
+    cW: Bool,        // flow.isWhisperModelInstalled
+    cS: Bool,        // flow.isSummaryModelInstalled
+    cSkip: Bool,     // flow.skipsSummary
+    wdl: Cnt,        // 進行中の Whisper モデルのダウンロードの数 (gate.isDownloadingWhisper)
+    sdl: Cnt,        // 進行中の要約モデルの取得の数 (gate.isDownloadingSummary)
+    okAtDone: Bool,  // 履歴: 完了した時点で、録画できる設定がそろっていた
+    bounced: Bool,   // 履歴: 完了の操作で、欠けている手順へ戻されたことがある
+    pickedWhileClosed: Bool // 履歴: 画面が閉じている間にダウンロードが終わり、モデルが選ばれた
+  }
+
+  init {
+    step = 0
+    saved = 0
+    done = false
+    open = true
+    dir = false
+    perm = false
+    wFile = false
+    oll = false
+    sFile = false
+    wSel = false
+    sSel = false
+    skip = false
+    cDir = false
+    cPerm = false
+    cW = false
+    cS = false
+    cSkip = false
+    wdl = 0
+    sdl = 0
+    okAtDone = false
+    bounced = false
+    pickedWhileClosed = false
+  }
+
+  @requirement("MODEL-ENV-001", "保存先フォルダは消されうる")
+  action env_remove_dir() {
+    requires dir
+    dir = false
+  }
+
+  @requirement("MODEL-ENV-002", "画面収録の権限は、システム設定でいつでも変えられる")
+  action env_perm(v: Bool) {
+    perm = v
+  }
+
+  @requirement("MODEL-ENV-003", "Whisper モデルのファイルは、別の版のアプリが置くことも、消されることもある")
+  action env_wfile(v: Bool) {
+    requires wdl == 0
+    wFile = v
+  }
+
+  @requirement("MODEL-ENV-004", "Ollama は起動・停止しうる")
+  action env_ollama(v: Bool) {
+    oll = v
+  }
+
+  @requirement("MODEL-ENV-005", "要約モデルは、ollama pull で入れることも、消すこともできる")
+  action env_smodel(v: Bool) {
+    requires sdl == 0
+    sFile = v
+  }
+
+  // SRC: MeetingScribe/Features/Settings/InitialSetupViewModel.swift (setOutputDirectory)
+  // SRC: MeetingScribe/Features/Settings/InitialSetupFlow.swift:96-98
+  @requirement("MODEL-ACT-001", "保存先の手順でフォルダを選ぶ")
+  action set_dir() {
+    requires open and not done and step == 1
+    dir = true
+    cDir = true
+  }
+
+  // SRC: MeetingScribe/Features/Settings/InitialSetupViewModel.swift (refreshPermissionStatuses)
+  // SRC: MeetingScribe/Features/Settings/InitialSetupFlow.swift:100-102
+  @requirement("MODEL-ACT-002", "権限を求める操作のあとで、画面収録の権限を読み直す")
+  action refresh_perm() {
+    requires open and not done
+    cPerm = perm
+  }
+
+  // SRC: MeetingScribe/Features/Settings/InitialSetupFlow.swift:80-89, 127-134
+  @requirement("MODEL-ACT-003", "今の手順の条件を満たしたら次へ進める")
+  action forward() {
+    requires open and not done and step < 5
+    requires step == 0 or (step == 1 and cDir) or (step == 2 and cPerm) or (step == 3 and cW) or (step == 4 and (cS or cSkip))
+    step = step + 1
+    saved = step + 1
+  }
+
+  // SRC: MeetingScribe/Features/Settings/InitialSetupFlow.swift:137-144
+  // SRC: MeetingScribe/Features/Settings/InitialSetupViewModel.swift (canMoveBack)
+  @requirement("MODEL-ACT-004", "ダウンロード中でなければ前の手順へ戻れる")
+  action back() {
+    requires open and not done and step > 0
+    requires wdl == 0 and sdl == 0
+    step = step - 1
+    saved = step - 1
+  }
+
+  // SRC: MeetingScribe/Features/Settings/InitialSetupFlow.swift:147-155
+  @requirement("MODEL-ACT-005", "要約モデルが無いとき、要約を作らずに完了の手順へ進める")
+  action skip_summary() {
+    requires open and not done and step == 4 and not cS and sdl == 0
+    skip = true
+    cSkip = true
+    step = 5
+    saved = 5
+  }
+
+  // SRC: MeetingScribe/Features/Settings/InitialSetupFlow.swift:116-125
+  // SRC: MeetingScribe/Features/Settings/InitialSetupViewModel.swift (refreshOllamaStatus)
+  @requirement("ASSUME-SETUP-002", "要約モデルが見つかったら、それを選び、要約をオンに戻す")
+  action refresh_ollama() {
+    requires open and not done
+    cS = oll and sFile
+    sSel = sSel or (oll and sFile)
+    skip = skip and not (oll and sFile)
+    cSkip = cSkip and not (oll and sFile)
+  }
+
+  // SRC: MeetingScribe/Features/Settings/InitialSetupFlow.swift:212-219 (gate.begin)
+  // SRC: MeetingScribe/Features/Settings/InitialSetupViewModel.swift (startWhisperDownload)
+  @requirement("ASSUME-SETUP-003", "進行中のダウンロードがあれば、2 本目を始めない")
+  action start_wdl() {
+    requires open and not done and step == 3 and not cW
+    wdl = if wdl == 0 then wdl + 1 else wdl
+  }
+
+  // 失敗・キャンセルなら ok = false。画面があれば、ファイルを読み直して選ぶ。
+  // SRC: MeetingScribe/Features/Settings/InitialSetupFlow.swift:110-113, 184-186, 221-226
+  @requirement("MODEL-ACT-006", "ダウンロードが終わったら、画面が閉じていてもモデルを選ぶ")
+  action finish_wdl(ok: Bool) {
+    requires wdl > 0
+    wdl = wdl - 1
+    wFile = wFile or ok
+    wSel = wSel or ok or (open and not done and wFile)
+    cW = if open and not done then wFile or ok else cW
+    pickedWhileClosed = pickedWhileClosed or (ok and not open)
+  }
+
+  // SRC: MeetingScribe/Features/Settings/InitialSetupFlow.swift:212-219 (gate.begin)
+  // SRC: MeetingScribe/Features/Settings/InitialSetupViewModel.swift (startSummaryPull)
+  @requirement("ASSUME-SETUP-003", "進行中のダウンロードがあれば、2 本目を始めない")
+  action start_sdl() {
+    requires open and not done and step == 4 and oll and not cS
+    sdl = if sdl == 0 then sdl + 1 else sdl
+  }
+
+  // SRC: MeetingScribe/Features/Settings/InitialSetupFlow.swift:116-125, 189-191, 221-226
+  @requirement("ASSUME-SETUP-002", "要約モデルが取得できたら、それを選び、要約をオンに戻す")
+  action finish_sdl(ok: Bool) {
+    requires sdl > 0
+    sdl = sdl - 1
+    sFile = sFile or ok
+    sSel = sSel or ok or (open and not done and oll and sFile)
+    skip = skip and not ok and not (open and not done and oll and sFile)
+    cS = if open and not done then oll and (sFile or ok) else cS
+    cSkip = if open and not done then cSkip and not (oll and (sFile or ok)) else cSkip
+  }
+
+  // 画面を閉じると ViewModel は捨てられる。ダウンロードは続く。
+  // SRC: MeetingScribe/ContentView.swift:28-36, MeetingScribe/App/MeetingScribeApp.swift:65-71
+  @requirement("MODEL-ACT-007", "初回セットアップの途中で設定ウィンドウを閉じられる")
+  action close_window() {
+    requires open and not done
+    open = false
+    step = 0
+    cDir = false
+    cPerm = false
+    cW = false
+    cS = false
+    cSkip = false
+  }
+
+  // アプリの終了。ダウンロードも止まる。
+  @requirement("MODEL-ACT-008", "初回セットアップの途中でアプリを終了できる")
+  action quit_app() {
+    requires not done
+    open = false
+    wdl = 0
+    sdl = 0
+    step = 0
+    cDir = false
+    cPerm = false
+    cW = false
+    cS = false
+    cSkip = false
+  }
+
+  // 新しい ViewModel が、保存済みの手順から再開し、環境を読み直す。
+  // SRC: MeetingScribe/Features/Settings/InitialSetupViewModel.swift (load, followRunningDownloads)
+  // SRC: MeetingScribe/Features/Settings/InitialSetupFlow.swift:92-125
+  // SRC: MeetingScribe/App/FirstLaunchTriggerView.swift:18-23
+  @requirement("MODEL-ACT-009", "開き直すと、保存した手順から再開する")
+  action reopen() {
+    requires not open and not done
+    open = true
+    step = saved
+    cDir = dir
+    cPerm = perm
+    cW = wFile
+    wSel = wSel or wFile
+    cS = oll and sFile
+    sSel = sSel or (oll and sFile)
+    skip = skip and not (oll and sFile)
+    cSkip = skip and not (oll and sFile)
+  }
+
+  // 完了の操作。設定と環境を読み直し、欠けていれば完了せずに欠けている最初の手順へ戻す。
+  // SRC: MeetingScribe/Features/Settings/InitialSetupFlow.swift:158-181
+  // SRC: MeetingScribe/Features/Settings/InitialSetupViewModel.swift (complete), MeetingScribe/ContentView.swift:29-35
+  @requirement("ASSUME-SETUP-001", "完了するのは、保存先・画面収録の権限・文字起こしモデル・要約モデル (または要約しない) がそろっているときだけ")
+  action complete() {
+    requires open and not done and step == 5
+    cDir = dir
+    cPerm = perm
+    cW = wFile
+    wSel = wSel or wFile
+    cS = oll and sFile
+    sSel = sSel or (oll and sFile)
+    skip = skip and not (oll and sFile)
+    cSkip = skip and not (oll and sFile)
+    if dir and perm and wFile and (skip or (oll and sFile)) {
+      done = true
+      open = false
+      saved = 0
+      okAtDone = dir and perm and wFile and (wSel or wFile) and
+                 ((skip and not (oll and sFile)) or ((sSel or (oll and sFile)) and sFile))
+    } else {
+      bounced = true
+      step = if not dir then 1 else if not perm then 2 else if not wFile then 3 else 4
+      saved = if not dir then 1 else if not perm then 2 else if not wFile then 3 else 4
+    }
+  }
+
+  // 完了したら録画を始められる (MenuBarViewModel.canStartRecording の条件)
+  @requirement("ASSUME-SETUP-001", "完了するのは、保存先・画面収録の権限・文字起こしモデル・要約モデル (または要約しない) がそろっているときだけ")
+  invariant CompletedIsUsable { done => okAtDone }
+
+  @requirement("ASSUME-SETUP-002", "要約モデルが見つかったら、要約をオンに戻す")
+  invariant SummaryFoundTurnsOnSummary { open and not done and cS => not skip }
+
+  @requirement("ASSUME-SETUP-003", "Whisper モデルのダウンロードは 1 本まで")
+  invariant OneWhisperDownload { wdl <= 1 }
+
+  @requirement("ASSUME-SETUP-003", "要約モデルの取得は 1 本まで")
+  invariant OneSummaryPull { sdl <= 1 }
+
+  // internal-docs/application-lifecycle.md 「現在のステップもUserDefaultsへ保存するため…途中から再開できます」
+  @requirement("ASSUME-SETUP-004", "画面に出ている手順は保存されている")
+  invariant ShownStepIsSaved { open and not done => saved == step }
+
+  @requirement("MODEL-WITNESS-001", "要約を作らずに完了できる")
+  reachable DoneWithoutSummary { done and skip }
+
+  @requirement("MODEL-WITNESS-002", "完了の操作で、欠けている手順へ戻される")
+  reachable BouncedToMissingStep { bounced and open and step < 5 }
+
+  @requirement("MODEL-WITNESS-003", "ダウンロード中に画面を閉じても、終わったモデルが選ばれ、開き直して完了できる")
+  reachable DoneAfterKeptDownload { done and pickedWhileClosed }
+}

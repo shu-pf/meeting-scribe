@@ -33,12 +33,19 @@ struct FirstLaunchGuidanceView: View {
                 canMoveBack: viewModel.canMoveBack,
                 canMoveForward: viewModel.canMoveForward,
                 onBack: {
-                    Task { await viewModel.moveBack() }
+                    viewModel.moveBack()
                 },
                 onForward: {
-                    Task { await viewModel.moveForward() }
+                    viewModel.moveForward()
                 },
-                onComplete: onComplete
+                onComplete: {
+                    Task {
+                        // 設定と環境を読み直し、欠けていれば完了せずにその手順へ戻す
+                        if await viewModel.complete() {
+                            onComplete()
+                        }
+                    }
+                }
             )
         }
         .frame(width: 680, height: 590)
@@ -72,6 +79,7 @@ struct FirstLaunchGuidanceView: View {
         case .complete:
             InitialSetupCompleteStep(
                 outputDirectoryPath: viewModel.outputDirectoryPath,
+                hasScreenCapturePermission: viewModel.hasScreenCapturePermission,
                 recommendation: viewModel.recommendation,
                 hasMicrophonePermission: viewModel.hasMicrophonePermission,
                 skipsSummary: viewModel.skipsSummary,
@@ -431,7 +439,7 @@ private struct InitialSetupSummaryStep: View {
             if !viewModel.isSummaryModelInstalled, !viewModel.isDownloadingSummaryModel {
                 VStack(alignment: .leading, spacing: 4) {
                     Button("要約を作成せずに文字起こしだけ使う") {
-                        Task { await viewModel.skipSummaryModel() }
+                        viewModel.skipSummaryModel()
                     }
                     .buttonStyle(.link)
                     Text("要約は設定からあとで有効にでき、録画履歴から作成することもできます。")
@@ -478,6 +486,7 @@ private struct InitialSetupSummaryStep: View {
 
 private struct InitialSetupCompleteStep: View {
     let outputDirectoryPath: String
+    let hasScreenCapturePermission: Bool
     let recommendation: InitialSetupRecommendation
     let hasMicrophonePermission: Bool
     let skipsSummary: Bool
@@ -501,7 +510,7 @@ private struct InitialSetupCompleteStep: View {
                     skipsSummary
                         ? "要約: 作成しない（設定から変更できます）"
                         : "要約: \(recommendation.summaryModelID)",
-                    "画面収録: 許可済み",
+                    "画面収録: \(hasScreenCapturePermission ? "許可済み" : "未許可（完了時に権限の手順へ戻ります）")",
                     "マイク: \(hasMicrophonePermission ? "許可済み" : "未許可（必要時に確認）")",
                 ] + (CrashReporter.isAvailable
                     ? ["エラーの自動送信: \(sendsErrorReports ? "オン" : "オフ")（設定から変更できます）"]
