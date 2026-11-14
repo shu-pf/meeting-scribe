@@ -132,10 +132,11 @@ final class MenuBarViewModel: ObservableObject {
     private var recordingDestinationURL: URL?
     /// 録画開始時の「要約を作成しない」設定。録画後のジョブへ引き継ぐ。
     private var recordingSkipsSummary = false
-    private var persistedPipelineJobs: [UUID: PersistedPipelineJob] = [:]
-    private var pipelineTasks: [UUID: Task<Void, Never>] = [:]
+    /// 録画後ジョブの起動・一時停止・再開の判断。設計は specs/pipeline_jobs.fsl
+    private var jobCoordinator = PipelineJobCoordinator<PersistedPipelineJob>()
+    /// 実行 1 回分 (Run) ごとの Task
+    private var pipelineTasks: [PipelineJobCoordinator<PersistedPipelineJob>.RunID: Task<Void, Never>] = [:]
     private var hasRestoredPipelineJobs = false
-    private var isPipelinePausedForSleep = false
     var activePipelineJobCount: Int {
         pipelineJobs.count { job in
             switch job.status {
@@ -460,6 +461,7 @@ final class MenuBarViewModel: ObservableObject {
         pipelineJobs.insert(job, at: 0)
         trimFinishedPipelineJobs()
         diagnosticLog.info("録画後パイプライン開始 fileURL=\(fileURL.path)")
+        let runID = jobCoordinator.beginNewJob(id: jobID)
         let task = Task { [weak self] in
             guard let self else { return }
             do {
@@ -494,10 +496,10 @@ final class MenuBarViewModel: ObservableObject {
                     detail: nil,
                     skipsSummary: skipsSummary
                 )
-                persistedPipelineJobs[jobID] = persistedJob
                 try await pipelineJobStore.upsert(persistedJob)
-                await executePipelineJob(persistedJob)
+                await executePreparedPipelineJob(persistedJob, run: runID)
             } catch {
+                jobCoordinator.preparationFailed(run: runID)
                 updatePipelineJob(
                     id: jobID,
                     status: .failed(error.localizedDescription)
@@ -506,9 +508,9 @@ final class MenuBarViewModel: ObservableObject {
                     "録画後パイプライン準備失敗 error=\(Self.describeError(error))"
                 )
             }
-            pipelineTasks[jobID] = nil
+            pipelineTasks[runID] = nil
         }
-        pipelineTasks[jobID] = task
+        pipelineTasks[runID] = task
     }
 
     /// 保存済みの文字起こしを使って要約だけをやり直す（要約が無い録画では作成する）。会議名でファイル名も付け替える。
@@ -536,6 +538,7 @@ final class MenuBarViewModel: ObservableObject {
         diagnosticLog.info(
             "要約やり直しを開始 historyID=\(item.id.uuidString) jobID=\(jobID.uuidString)"
         )
+        let runID = jobCoordinator.beginNewJob(id: jobID)
         let task = Task { [weak self] in
             guard let self else { return }
             do {
@@ -570,10 +573,10 @@ final class MenuBarViewModel: ObservableObject {
                     resummarizePreviousSummaryPath: item.summaryURL?.path,
                     historyItemID: item.id
                 )
-                persistedPipelineJobs[jobID] = persistedJob
                 try await pipelineJobStore.upsert(persistedJob)
-                await executePipelineJob(persistedJob)
+                await executePreparedPipelineJob(persistedJob, run: runID)
             } catch {
+                jobCoordinator.preparationFailed(run: runID)
                 resummarizingHistoryIDs.remove(item.id)
                 updatePipelineJob(
                     id: jobID,
@@ -583,19 +586,15 @@ final class MenuBarViewModel: ObservableObject {
                     "要約やり直しの準備失敗 error=\(Self.describeError(error))"
                 )
             }
-            pipelineTasks[jobID] = nil
+            pipelineTasks[runID] = nil
         }
-        pipelineTasks[jobID] = task
+        pipelineTasks[runID] = task
     }
 
     /// 失敗したジョブを再開待ちへ戻して実行し直す。
     /// 作業領域のチェックポイントが残っていれば、完了済みの文字起こしは再利用して未完了の工程から続ける。
     func retryPipelineJob(id: UUID) {
-        guard var job = persistedPipelineJobs[id], job.state == .failed else { return }
-        job.state = .waiting
-        job.stateUpdatedAt = Date()
-        job.detail = nil
-        persistedPipelineJobs[id] = job
+        guard let job = jobCoordinator.retry(id: id) else { return }
         if let historyItemID = job.historyItemID {
             resummarizingHistoryIDs.insert(historyItemID)
         }
@@ -603,7 +602,7 @@ final class MenuBarViewModel: ObservableObject {
         diagnosticLog.info("失敗した録画後ジョブを再実行 jobID=\(id.uuidString)")
         Task {
             try? await pipelineJobStore.upsert(job)
-            startPersistedPipelineJob(job)
+            startPersistedPipelineJob(id: job.id)
         }
     }
 
@@ -620,9 +619,7 @@ final class MenuBarViewModel: ObservableObject {
                     restored[index].detail = nil
                     try await pipelineJobStore.upsert(restored[index])
                 }
-                persistedPipelineJobs = Dictionary(
-                    uniqueKeysWithValues: restored.map { ($0.id, $0) }
-                )
+                jobCoordinator.restore(restored)
                 resummarizingHistoryIDs = Set(
                     restored
                         .filter { $0.state.isActive }
@@ -631,7 +628,7 @@ final class MenuBarViewModel: ObservableObject {
                 pipelineJobs = restored.map(Self.makePipelineJob)
                 trimFinishedPipelineJobs()
                 for job in restored where job.state == .waiting {
-                    startPersistedPipelineJob(job)
+                    startPersistedPipelineJob(id: job.id)
                 }
                 diagnosticLog.info(
                     "永続化された録画後ジョブを復元 count=\(restored.count)"
@@ -645,52 +642,79 @@ final class MenuBarViewModel: ObservableObject {
     }
 
     /// 蓋を閉じる前に外部プロセスと通信を止め、永続キューを再開待ちへ戻す。
+    /// 復帰処理がまだ待っている間に再びスリープしても、そのあとに始まったジョブを止める。
     func pausePipelineJobsForSystemSleep() {
-        guard !isPipelinePausedForSleep else { return }
-        isPipelinePausedForSleep = true
-        diagnosticLog.info("システムスリープに備えて録画後処理を一時停止")
-        for (id, task) in pipelineTasks {
-            task.cancel()
-            markPipelineJobWaiting(id: id)
+        let preparation = jobCoordinator.prepareForSleep()
+        diagnosticLog.info(
+            "システムスリープに備えて録画後処理を一時停止 cancel=\(preparation.cancelledRuns.count)"
+        )
+        for runID in preparation.cancelledRuns {
+            pipelineTasks[runID]?.cancel()
+        }
+        for job in preparation.waitingJobs {
+            updatePipelineJob(id: job.id, status: .waiting)
+            Task {
+                try? await pipelineJobStore.upsert(job)
+            }
         }
     }
 
     /// 復帰時にキャンセル完了を待ってから、未完了ジョブを重複なく再開する。
+    /// 待っている間に再びスリープしたら、この復帰処理では再開しない（次の復帰処理が再開する）。
     func resumePipelineJobsAfterSystemWake() {
-        guard isPipelinePausedForSleep else { return }
+        guard let token = jobCoordinator.wakeToken() else { return }
         Task {
-            let tasks = Array(pipelineTasks.values)
+            let tasks = jobCoordinator.runsToAwait().compactMap { pipelineTasks[$0] }
             for task in tasks {
                 await task.value
             }
-            // 待ったタスクは終了時に自分の登録を消している。ここで全消しすると、
-            // 待っている間に始まった録画後ジョブの登録まで消え、同じジョブを二重に起動してしまう。
-            isPipelinePausedForSleep = false
-            let waitingJobs = persistedPipelineJobs.values
-                .filter { $0.state == .waiting }
-                .sorted { $0.createdAt < $1.createdAt }
-            for job in waitingJobs {
-                startPersistedPipelineJob(job)
+            let started = jobCoordinator.finishWake(token: token)
+            for (job, runID) in started {
+                launchPipelineRun(job, run: runID)
             }
             diagnosticLog.info(
-                "システム復帰後に録画後処理を再開 count=\(waitingJobs.count)"
+                "システム復帰後に録画後処理を再開 token=\(token) count=\(started.count)"
             )
         }
     }
 
-    private func startPersistedPipelineJob(_ job: PersistedPipelineJob) {
-        guard !isPipelinePausedForSleep, pipelineTasks[job.id] == nil else {
+    private func startPersistedPipelineJob(id: UUID) {
+        guard let runID = jobCoordinator.startPersistedJob(id: id),
+              let job = jobCoordinator.jobs[id] else {
             return
         }
-        let task = Task { [weak self] in
-            guard let self else { return }
-            await executePipelineJob(job)
-            pipelineTasks[job.id] = nil
-        }
-        pipelineTasks[job.id] = task
+        launchPipelineRun(job, run: runID)
     }
 
-    private func executePipelineJob(_ job: PersistedPipelineJob) async {
+    private func launchPipelineRun(
+        _ job: PersistedPipelineJob,
+        run runID: PipelineJobCoordinator<PersistedPipelineJob>.RunID
+    ) {
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await executePipelineJob(job, run: runID)
+            pipelineTasks[runID] = nil
+        }
+        pipelineTasks[runID] = task
+    }
+
+    /// 準備を終えた新しいジョブを実行する。スリープ中や復帰の待ち合わせ中なら実行せず、復帰後の再開を待つ。
+    private func executePreparedPipelineJob(
+        _ job: PersistedPipelineJob,
+        run runID: PipelineJobCoordinator<PersistedPipelineJob>.RunID
+    ) async {
+        guard jobCoordinator.jobPrepared(job, run: runID) else {
+            updatePipelineJob(id: job.id, status: .waiting)
+            diagnosticLog.info("一時停止中のため録画後パイプラインを再開待ちに変更 jobID=\(job.id.uuidString)")
+            return
+        }
+        await executePipelineJob(job, run: runID)
+    }
+
+    private func executePipelineJob(
+        _ job: PersistedPipelineJob,
+        run runID: PipelineJobCoordinator<PersistedPipelineJob>.RunID
+    ) async {
         let outputDirectory = job.resolveOutputDirectoryURL()
         let isAccessing = outputDirectory.startAccessingSecurityScopedResource()
         defer {
@@ -737,11 +761,12 @@ final class MenuBarViewModel: ObservableObject {
             if let historyItemID = job.historyItemID {
                 resummarizingHistoryIDs.remove(historyItemID)
             }
-            await updatePersistedPipelineJob(
-                id: job.id,
-                state: .completed,
-                detail: result.meetingTitle
-            )
+            if let finishedJob = jobCoordinator.runFinished(
+                runID,
+                outcome: .succeeded(detail: result.meetingTitle)
+            ) {
+                try? await pipelineJobStore.upsert(finishedJob)
+            }
             updatePipelineJob(
                 id: job.id,
                 status: .completed(result.meetingTitle)
@@ -757,23 +782,21 @@ final class MenuBarViewModel: ObservableObject {
                 hasSummary: result.summaryURL != nil
             )
         } catch {
-            if Task.isCancelled {
-                await updatePersistedPipelineJob(
-                    id: job.id,
-                    state: .waiting,
-                    detail: nil
-                )
+            let finishedJob = jobCoordinator.runFinished(
+                runID,
+                outcome: .failed(detail: error.localizedDescription)
+            )
+            if let finishedJob {
+                try? await pipelineJobStore.upsert(finishedJob)
+            }
+            if finishedJob?.state == .waiting {
+                // スリープでキャンセルされた。復帰後に再開する
                 updatePipelineJob(id: job.id, status: .waiting)
                 diagnosticLog.info("録画後パイプラインを再開待ちに変更")
             } else {
                 if let historyItemID = job.historyItemID {
                     resummarizingHistoryIDs.remove(historyItemID)
                 }
-                await updatePersistedPipelineJob(
-                    id: job.id,
-                    state: .failed,
-                    detail: error.localizedDescription
-                )
                 updatePipelineJob(
                     id: job.id,
                     status: .failed(error.localizedDescription)
@@ -799,7 +822,9 @@ final class MenuBarViewModel: ObservableObject {
         case .summarizing: .summarizing
         case .saving: .saving
         }
-        await updatePersistedPipelineJob(id: id, state: state, detail: nil)
+        if let job = jobCoordinator.updateProgress(jobID: id, state: state) {
+            try? await pipelineJobStore.upsert(job)
+        }
         updatePipelineJob(id: id, status: status)
     }
 
@@ -808,31 +833,6 @@ final class MenuBarViewModel: ObservableObject {
         pipelineJobs[index].status = status
         pipelineJobs[index].statusUpdatedAt = Date()
         trimFinishedPipelineJobs()
-    }
-
-    private func markPipelineJobWaiting(id: UUID) {
-        guard var job = persistedPipelineJobs[id] else { return }
-        job.state = .waiting
-        job.stateUpdatedAt = Date()
-        job.detail = nil
-        persistedPipelineJobs[id] = job
-        updatePipelineJob(id: id, status: .waiting)
-        Task {
-            try? await pipelineJobStore.upsert(job)
-        }
-    }
-
-    private func updatePersistedPipelineJob(
-        id: UUID,
-        state: PersistedPipelineJobState,
-        detail: String?
-    ) async {
-        guard var job = persistedPipelineJobs[id] else { return }
-        job.state = state
-        job.stateUpdatedAt = Date()
-        job.detail = detail
-        persistedPipelineJobs[id] = job
-        try? await pipelineJobStore.upsert(job)
     }
 
     private static func makePipelineJob(

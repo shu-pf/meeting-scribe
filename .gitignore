@@ -12,3 +12,6 @@ build/
 
 # xcode-build-server が生成する SourceKit-LSP 用設定（端末ごとのパスを含む）
 buildServer.json
+
+# specs/conformance の SwiftPM ビルド成果物
+specs/conformance/.build/

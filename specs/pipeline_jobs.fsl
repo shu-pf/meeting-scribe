@@ -1,0 +1,283 @@
+fsl 5
+// 録画後ジョブの起動・スリープ前の一時停止・復帰後の再開の設計仕様。
+// 判断は PipelineJobCoordinator に集め、Swift の Task とスリープ・復帰の通知は環境として扱う。
+//
+// ASSUME-1: ジョブは 2 件、1 ジョブにつき同時に生きうる実行 (Run) は 2 つまで
+//           (Slot = job * 2 + n)。3 重実行は表せないが、2 重実行が起きた時点で
+//           NoDoubleRun が破れるので検出には足りる。
+// ASSUME-2: 同時に待っている復帰処理は 2 つまで (W)。3 つ目が要る並びは os_wake を有効にしない。
+// ASSUME-3: 起動時の復元 (restore) とアプリの強制終了は対象外。
+// ASSUME-4: ディスク上のマニフェストとメモリ上のジョブは区別しない。
+// ASSUME-5: 文字起こし・要約の中身は扱わず、進捗の通知と成功・失敗だけを表す。
+//           Swift Task のキャンセルは協調的なので、キャンセル後も進捗の通知や成功はありうる。
+// ASSUME-6: willSleep と didWake は交互に 1 回ずつ届く。asleep はその間を表す環境の状態で、
+//           スリープに入る直前の猶予に Task が動く可能性も含めて、asleep 中もアプリ側の動作は止めない。
+// ASSUME-8: Swift の Task はいずれ終わる (準備・実行は止まり続けない)。復帰処理の Task と再実行の Task もいずれ進む。
+//           これらを fair action として表し、復帰後の自動再開 (leadsTo) の前提にする。
+// ASSUME-7: 新しいジョブは、録画停止・ストリームの予期しない停止・要約のやり直しから作られる。
+//           ストリームの停止はスリープ中にも起こりうるので、record は asleep でも有効にする。
+spec PipelineJobs {
+  type Job = 0..1
+  type Slot = 0..3
+  type W = 0..1
+
+  enum JobState { Absent, Waiting, Transcribing, Summarizing, Saving, Completed, Failed }
+  enum HState { Idle, Pending, Awaiting }
+
+  // Swift の Task 1 つ分。prepared は、新しいジョブの準備を終えてジョブを保存したか。
+  // 終わった Run は印を残さず初期値に戻す (実装は終わった Run を持たない)。
+  // awaited0 / awaited1 は、復帰処理 0 / 1 がこの Run の終わりを待っているか (実装は Run ID で持つ)。
+  struct Run { alive: Bool, cancelled: Bool, prepared: Bool, awaited0: Bool, awaited1: Bool }
+
+  state {
+    js: Map<Job, JobState>,        // coordinator.jobs[id].state (無ければ Absent)
+    run: Map<Slot, Run>,           // coordinator.runs
+    reg: Map<Job, Option<Slot>>,   // coordinator.registrations
+    paused: Bool,                  // coordinator.isPausedForSleep
+    asleep: Bool,                  // 環境: willSleep から didWake まで
+    hs: Map<W, HState>,            // 環境: 復帰処理の Task
+    stale: Map<W, Bool>,           // 復帰処理の世代が古いか (token != sleepGeneration)
+    retryPending: Map<Job, Bool>,  // 環境: 再実行の Task { upsert; start } が未実行
+    resumed: Map<Job, Bool>        // 履歴: 復帰処理がこのジョブを起動したことがある
+  }
+
+  init {
+    forall j: Job { js[j] = Absent }
+    forall j: Job { reg[j] = none }
+    forall j: Job { retryPending[j] = false }
+    forall j: Job { resumed[j] = false }
+    forall s: Slot { run[s] = Run { alive: false, cancelled: false, prepared: false, awaited0: false, awaited1: false } }
+    forall w: W { hs[w] = Idle }
+    forall w: W { stale[w] = false }
+    paused = false
+    asleep = false
+  }
+
+  // 新しいジョブの準備用 Run を作って登録する。一時停止中でも作る (準備のあとで実行するかを決める)。
+  // SRC: MeetingScribe/Domain/Pipeline/PipelineJobCoordinator.swift:63-66
+  // SRC: MeetingScribe/Features/MenuBar/MenuBarViewModel.swift:451-515 (runPipelineInBackground), 517-592 (resummarize)
+  @requirement("MODEL-ACT-001", "録画停止・ストリームの停止・要約のやり直しで新しいジョブを作る")
+  action record(j: Job) {
+    requires js[j] == Absent
+    requires reg[j] == none
+    requires not run[j * 2].alive
+    requires not run[j * 2 + 1].alive
+    run[j * 2] = Run { alive: true, cancelled: false, prepared: false, awaited0: false, awaited1: false }
+    reg[j] = some(j * 2)
+  }
+
+  // 準備が済み、ジョブを再開待ちとして保存した。キャンセル済みか一時停止中なら実行せずに終える。
+  // SRC: MeetingScribe/Domain/Pipeline/PipelineJobCoordinator.swift:70-83, MeetingScribe/Features/MenuBar/MenuBarViewModel.swift:702-712
+  @requirement("ASSUME-SLEEP-001", "スリープ中や復帰の待ち合わせ中に作られたジョブは、実行せず再開待ちにする")
+  fair action prepare(s: Slot) {
+    requires run[s].alive
+    requires not run[s].prepared
+    js[s / 2] = Waiting
+    if run[s].cancelled or paused {
+      run[s] = Run { alive: false, cancelled: false, prepared: false, awaited0: false, awaited1: false }
+      reg[s / 2] = if reg[s / 2] == some(s) then none else reg[s / 2]
+    } else {
+      run[s].prepared = true
+    }
+  }
+
+  // 準備に失敗した (設定が読めないなど)。ジョブは保存されていない。
+  // SRC: MeetingScribe/Domain/Pipeline/PipelineJobCoordinator.swift:86-89, MeetingScribe/Features/MenuBar/MenuBarViewModel.swift:501-510
+  @requirement("MODEL-ACT-002", "準備に失敗したジョブは保存されない")
+  fair action prepare_failed(s: Slot) {
+    requires run[s].alive
+    requires not run[s].prepared
+    run[s] = Run { alive: false, cancelled: false, prepared: false, awaited0: false, awaited1: false }
+    reg[s / 2] = if reg[s / 2] == some(s) then none else reg[s / 2]
+  }
+
+  // 進捗の通知。ジョブの今の状態は見ずに上書きする。
+  // SRC: MeetingScribe/Domain/Pipeline/PipelineJobCoordinator.swift:92-99, MeetingScribe/Features/MenuBar/MenuBarViewModel.swift:810-829
+  @requirement("MODEL-ACT-003", "進捗の通知でジョブの状態を上書きする")
+  action progress(s: Slot, st: JobState) {
+    requires run[s].alive
+    requires run[s].prepared
+    requires st == Transcribing or st == Summarizing or st == Saving
+    js[s / 2] = st
+  }
+
+  // 実行が終わった。失敗でもキャンセル済みなら再開待ちに戻す。
+  // SRC: MeetingScribe/Domain/Pipeline/PipelineJobCoordinator.swift:102-117, MeetingScribe/Features/MenuBar/MenuBarViewModel.swift:764-806
+  @requirement("MODEL-ACT-004", "成功は完了、失敗は失敗、ただしスリープでキャンセルされた失敗は再開待ち")
+  fair action finish(s: Slot, ok: Bool) {
+    requires run[s].alive
+    requires run[s].prepared
+    run[s] = Run { alive: false, cancelled: false, prepared: false, awaited0: false, awaited1: false }
+    js[s / 2] = if ok then Completed else if run[s].cancelled then Waiting else Failed
+    reg[s / 2] = if reg[s / 2] == some(s) then none else reg[s / 2]
+  }
+
+  // 失敗ジョブの再実行。起動は別の Task が保存のあとで行う。
+  // SRC: MeetingScribe/Domain/Pipeline/PipelineJobCoordinator.swift:120-124, MeetingScribe/Features/MenuBar/MenuBarViewModel.swift:596-611
+  @requirement("MODEL-ACT-005", "失敗したジョブだけを再実行できる")
+  action retry(j: Job) {
+    requires not asleep
+    requires js[j] == Failed
+    js[j] = Waiting
+    retryPending[j] = true
+  }
+
+  // SRC: MeetingScribe/Domain/Pipeline/PipelineJobCoordinator.swift:127-134, MeetingScribe/Features/MenuBar/MenuBarViewModel.swift:681-688
+  @requirement("ASSUME-NODUP-002", "一時停止中・実行中・再開待ち以外のジョブは起動しない")
+  fair action retry_start(j: Job) {
+    requires retryPending[j]
+    retryPending[j] = false
+    if not paused and reg[j] == none and js[j] == Waiting {
+      if not run[j * 2].alive {
+        run[j * 2] = Run { alive: true, cancelled: false, prepared: true, awaited0: false, awaited1: false }
+        reg[j] = some(j * 2)
+      } else {
+        run[j * 2 + 1] = Run { alive: true, cancelled: false, prepared: true, awaited0: false, awaited1: false }
+        reg[j] = some(j * 2 + 1)
+      }
+    }
+  }
+
+  // willSleep: 一時停止中でも毎回、登録中の Run をキャンセルし、ジョブを再開待ちにし、世代を進める。
+  // SRC: MeetingScribe/Domain/Pipeline/PipelineJobCoordinator.swift:137-152, MeetingScribe/Features/MenuBar/MenuBarViewModel.swift:646-660
+  // SRC: internal-docs/application-lifecycle.md:290
+  @requirement("ASSUME-SLEEP-002", "スリープの前には、そのとき登録中の Run を毎回キャンセルする")
+  action os_sleep() {
+    requires not asleep
+    asleep = true
+    paused = true
+    forall s: Slot {
+      run[s].cancelled = run[s].cancelled or (run[s].alive and reg[s / 2] == some(s))
+    }
+    forall j: Job {
+      js[j] = if reg[j] != none and js[j] != Absent then Waiting else js[j]
+    }
+    forall w: W { stale[w] = stale[w] or hs[w] != Idle }
+  }
+
+  // didWake: 一時停止中なら復帰処理の Task を作り、その時点の世代を持たせる。
+  // SRC: MeetingScribe/Domain/Pipeline/PipelineJobCoordinator.swift:155-157, MeetingScribe/Features/MenuBar/MenuBarViewModel.swift:664-665
+  @requirement("MODEL-ACT-006", "復帰の通知では、一時停止中のときだけ復帰処理を始める")
+  action os_wake() {
+    requires asleep
+    requires not paused or hs[0] == Idle or hs[1] == Idle
+    asleep = false
+    hs[0] = if paused and hs[0] == Idle then Pending else hs[0]
+    hs[1] = if paused and hs[0] != Idle and hs[1] == Idle then Pending else hs[1]
+    stale[0] = if paused and hs[0] == Idle then false else stale[0]
+    stale[1] = if paused and hs[0] != Idle and hs[1] == Idle then false else stale[1]
+  }
+
+  // 復帰処理の Task が走り出し、その時点で登録中の Run を待つ対象として取る
+  // SRC: MeetingScribe/Domain/Pipeline/PipelineJobCoordinator.swift:160-162, MeetingScribe/Features/MenuBar/MenuBarViewModel.swift:666-667
+  @requirement("MODEL-ACT-007", "復帰処理は、走り出した時点で登録中の Run の終わりを待つ")
+  fair action wake_snap(w: W) {
+    requires hs[w] == Pending
+    hs[w] = Awaiting
+    if w == 0 {
+      forall s: Slot { run[s].awaited0 = run[s].alive and reg[s / 2] == some(s) }
+    } else {
+      forall s: Slot { run[s].awaited1 = run[s].alive and reg[s / 2] == some(s) }
+    }
+  }
+
+  // 待つ対象が全部終わった。世代が今と同じときだけ一時停止を解き、再開待ちで未登録のジョブを起動する。
+  // SRC: MeetingScribe/Domain/Pipeline/PipelineJobCoordinator.swift:166-174, MeetingScribe/Features/MenuBar/MenuBarViewModel.swift:668-676
+  @requirement("ASSUME-SLEEP-003", "復帰の待ち合わせ中に次のスリープが来たら、その復帰処理は再開しない")
+  fair action wake_finish(w: W) {
+    requires hs[w] == Awaiting
+    // 終わった Run は印を残さないので、印の付いた Run が無くなれば待ち終わり
+    requires forall s: Slot { not (if w == 0 then run[s].awaited0 else run[s].awaited1) }
+    hs[w] = Idle
+    stale[w] = false
+    if not stale[w] {
+      paused = false
+      forall s: Slot {
+        run[s] = if js[s / 2] == Waiting and reg[s / 2] == none and
+                    (if s % 2 == 0 then not run[s].alive else run[s - 1].alive and not run[s].alive)
+                 then Run { alive: true, cancelled: false, prepared: true, awaited0: false, awaited1: false }
+                 else run[s]
+      }
+      forall j: Job {
+        resumed[j] = resumed[j] or (js[j] == Waiting and reg[j] == none)
+      }
+      forall j: Job {
+        reg[j] = if js[j] == Waiting and reg[j] == none
+                 then (if not run[j * 2].alive then some(j * 2) else some(j * 2 + 1))
+                 else reg[j]
+      }
+    }
+  }
+
+  // internal-docs/application-lifecycle.md 「同じジョブIDを1回だけ再開します」
+  @requirement("ASSUME-NODUP-001", "同じジョブを 2 つの Run が同時に実行しない")
+  invariant NoDoubleRun {
+    forall j: Job { not (run[j * 2].alive and run[j * 2 + 1].alive) }
+  }
+
+  // internal-docs/application-lifecycle.md 「閉じている間の処理継続は保証しません。
+  // willSleepNotification を受けると…キャンセルし、ジョブを再開待ちとして永続化します」
+  @requirement("ASSUME-SLEEP-004", "スリープ中に、キャンセルされていない実行中の Run は無い")
+  invariant NothingRunsAsleep {
+    forall s: Slot { asleep and run[s].alive and run[s].prepared => run[s].cancelled }
+  }
+
+  // AGENTS.md「スリープ前に再開待ちへ戻して復帰後に自動再開する」。再びスリープしたら、その次の復帰に任せる。
+  @requirement("ASSUME-SLEEP-005", "起きている間、実行されていない再開待ちのジョブは、いずれ起動される")
+  leadsTo Job0Resumes {
+    js[0] == Waiting and reg[0] == none and not asleep ~> reg[0] != none or js[0] != Waiting or asleep
+  }
+
+  @requirement("ASSUME-SLEEP-005", "起きている間、実行されていない再開待ちのジョブは、いずれ起動される")
+  leadsTo Job1Resumes {
+    js[1] == Waiting and reg[1] == none and not asleep ~> reg[1] != none or js[1] != Waiting or asleep
+  }
+
+  // ここから下の MODEL-AUX は、上の 2 つを帰納法で証明するための補助の不変条件。
+  @requirement("MODEL-AUX-001", "ジョブの登録は、そのジョブの Slot だけを指す")
+  invariant RegPointsToOwnSlot {
+    forall j: Job { reg[j] == none or reg[j] == some(j * 2) or reg[j] == some(j * 2 + 1) }
+  }
+
+  @requirement("MODEL-AUX-002", "生きている Run は必ず登録されている")
+  invariant AliveRunIsRegistered {
+    forall s: Slot { run[s].alive => reg[s / 2] == some(s) }
+  }
+
+  @requirement("MODEL-AUX-003", "登録が指す Run は生きている")
+  invariant RegisteredRunIsAlive {
+    forall j: Job { reg[j] is some(r) => run[r].alive }
+  }
+
+  @requirement("MODEL-AUX-004", "スリープ中は一時停止している")
+  invariant AsleepImpliesPaused { asleep => paused }
+
+  @requirement("MODEL-AUX-005", "一時停止中に、キャンセルされていない実行中の Run は無い")
+  invariant PausedRunsAreCancelled {
+    forall s: Slot { paused and run[s].alive and run[s].prepared => run[s].cancelled }
+  }
+
+  @requirement("MODEL-AUX-006", "スリープ中に待っている復帰処理は古い世代のもの")
+  invariant AsleepHandlersAreStale {
+    forall w: W { asleep and hs[w] != Idle => stale[w] }
+  }
+
+  @requirement("MODEL-AUX-007", "今の世代の復帰処理がある間は一時停止している")
+  invariant CurrentHandlerImpliesPaused {
+    forall w: W { hs[w] != Idle and not stale[w] => paused }
+  }
+
+  @requirement("MODEL-AUX-008", "今の世代の復帰処理は 1 つまで")
+  invariant OneCurrentHandler {
+    not (hs[0] != Idle and not stale[0] and hs[1] != Idle and not stale[1])
+  }
+
+  @requirement("MODEL-WITNESS-001", "スリープでキャンセルされたジョブが、復帰後に別の Run で再開して完了できる")
+  reachable ResumedAfterSleepCompletes { resumed[0] and js[0] == Completed and not paused }
+
+  @requirement("MODEL-WITNESS-002", "復帰の待ち合わせ中に 2 回目のスリープが来て、古い復帰処理と新しい復帰処理が並ぶ")
+  reachable SecondSleepDuringWake { stale[0] and hs[0] == Awaiting and hs[1] == Pending and not asleep }
+
+  @requirement("MODEL-WITNESS-003", "2 回目の復帰のあとに一時停止が解ける")
+  reachable ResumedAfterSecondSleep { hs[0] == Awaiting and stale[0] and hs[1] == Idle and not paused }
+}

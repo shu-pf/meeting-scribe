@@ -82,3 +82,7 @@ run_check pipeline_job_store
 run_check recording_history_store
 run_check skip_summary --no-ollama
 run_check privacy_scrubber
+
+# specs/pipeline_jobs.fsl から生成した照合テストを、録画後ジョブの PipelineJobCoordinator に対して実行する
+echo "== pipeline_jobs_conformance"
+swift test --package-path specs/conformance

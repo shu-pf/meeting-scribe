@@ -67,6 +67,7 @@ xcode-build-server config -project MeetingScribe.xcodeproj -scheme "MeetingScrib
 - 失敗ジョブの再実行を変更したときは、Debugアプリで失敗ジョブの「再実行」を押し、文字起こしチェックポイントを再利用して要約から完了し、録画履歴へ追加されることを確認する
 - 要約のやり直し経路を変更したときは、`./scripts/run_checks.sh resummarize` を実行し、既存ファイル名の日時部分を保ったまま会議名が付け替わり、やり直し前のファイルが残らないことを確認する。やり直しの出力先は現在の保存先設定ではなく既存ファイルのある場所とする
 - 録画後パイプラインの再開処理を変更したときは、文字起こし中と要約中のそれぞれでDebugアプリを終了・再起動し、永続キューとチェックポイントから二重実行せず完了することを確認する。文字起こし中の強制終了では、残留Whisperを実行パス照合後に停止してから1プロセスだけで再開することも確認する。蓋を閉じたスリープは処理継続を保証せず、スリープ前に再開待ちへ戻して復帰後に自動再開する
+- 録画後ジョブの起動・一時停止・再開の判断（`PipelineJobCoordinator` とその呼び出し）を変更したときは、同じ変更内で `specs/pipeline_jobs.fsl` を更新する。`fslc verify specs/pipeline_jobs.fsl --depth 10` が verified、`--engine induction` が proved になり、`specs/conformance/regenerate.sh` で再生成した照合テスト（`scripts/run_checks.sh` に含む）と `specs/conformance/replay_random_walks.sh` が通ることを確認する。fslc は 5.x が要る
 - 録画中に設定済みの保存先フォルダが削除されても、録画完了時に保存先を再作成して完成ファイルを保存できることを境界条件として確認する
 - 録画の品質保証上限は5時間。長時間処理を変更したときは、5時間の音声入力に対して `./scripts/run_checks.sh long_audio_extraction <音声ファイル>` を実行し、WAV抽出がメモリへ全量展開されないことを確認する
 - 5時間到達時は録画ファイルを正常終了して後処理へ渡し、ユーザーへローカル通知する。この自動終了経路を変更した場合は、短い上限を注入して境界動作を確認する

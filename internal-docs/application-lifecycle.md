@@ -209,7 +209,7 @@ sequenceDiagram
 | 録画ファイル確定 | `MenuBarViewModel.finalizeRecording()` | 消えた保存先を再作成し、Application Supportの作業ファイルを設定済み保存先へ移動 |
 | 後処理 | `RecordingPipeline.processRecording()` | 全音声トラックの合成、Whisper文字起こし、Ollama要約（ジョブの「要約を作成しない」がオンなら省略）、チェックポイント、録画・Markdownの完成名への移動・保存 |
 | 要約の作成・やり直し | `RecordingPipeline.resummarize()`、`MenuBarViewModel.resummarize()` | 録画履歴の保存済み文字起こしから要約を作成（要約なしの録画）またはやり直し、既存ファイル名の日時部分を保ったまま会議名へ付け替え |
-| 後処理の復旧 | `PipelineJobStore`、`MenuBarViewModel` | ジョブと保存先Bookmarkを永続化し、スリープ・終了・クラッシュ後に未完了フェーズから再開 |
+| 後処理の復旧 | `PipelineJobStore`、`PipelineJobCoordinator`、`MenuBarViewModel` | ジョブと保存先Bookmarkを永続化し、スリープ・終了・クラッシュ後に未完了フェーズから再開 |
 | 録画履歴 | `RecordingHistoryStore`、`MenuBarViewModel` | 録画ごとの履歴JSONとファイルBookmarkをApplication Supportへ永続化し、保存先変更後も過去の録画を表示 |
 | UI状態と通知 | `MenuBarViewModel` | 録画・パイプライン状態、エラー表示、完了通知 |
 | 診断 | `DiagnosticLogger`、`DiagnosticLogStore` | OSLogとローカルファイルへ処理状態・エラーを記録 |
@@ -288,6 +288,15 @@ Writerの正常終了後、設定済み保存先が録画中に削除されて�
 11. 完了後、文字起こし本文と要約本文を含む作業チェックポイントを削除
 
 macOSは蓋を閉じるとシステム自体がスリープするため、閉じている間の処理継続は保証しません。`NSWorkspace.willSleepNotification` を受けるとWhisperプロセスとOllama通信をキャンセルし、ジョブを再開待ちとして永続化します。`NSWorkspace.didWakeNotification` ではキャンセル完了を待ってから同じジョブIDを1回だけ再開します。
+
+起動・一時停止・再開してよいかの判断は `PipelineJobCoordinator` に集めています。Swift の `Task` は実行1回分（Run）ごとに `MenuBarViewModel` が持ち、Coordinator が返した Run だけを起動・キャンセルします。
+
+- 同じジョブの Run は同時に1つまでです。登録中のジョブ、一時停止中、再開待ち以外のジョブは起動しません
+- スリープの通知は、一時停止中でも毎回処理します。復帰処理がキャンセル完了を待っている間に録画を止めてから再び蓋を閉じても、そのあとに始まったジョブを止めて再開待ちに戻します
+- スリープのたびに世代を進めます。復帰処理は開始時の世代を持ち、待ち終えた時点で世代が変わっていれば（待っている間に再びスリープした）一時停止を解かず、次の復帰処理に再開を任せます
+- 一時停止中（スリープ中や、復帰処理が待っている間）に録画停止・ストリームの予期しない停止・要約のやり直しで作られたジョブは、保存までは行い、実行せずに再開待ちにします。復帰処理がまとめて再開します
+
+この設計は `specs/pipeline_jobs.fsl` に FSL で書いています。二重実行しないことと、スリープ中にキャンセルされていない Run が走らないことは `fslc verify --engine induction` で証明しています。起きている間に再開待ちのジョブがいずれ起動されることは、深さ10までの有界検査で確かめています。`specs/conformance/` の照合テストは、仕様から生成したテストと、実コードをランダムに動かした軌跡の `fslc replay` で、Coordinator が仕様どおりに動くことを確かめます。
 
 アプリ終了やクラッシュで通知処理を完了できなかった場合も、起動時に `waiting`、`transcribing`、`summarizing`、`saving` のジョブをすべて再開待ちへ正規化します。`transcript.txt` があればWhisperを省略し、`summary.json` があればOllamaを省略して保存から再開します。完成ファイル名も要約チェックポイント内で確定済みなので、保存中断後の再実行で別名ファイルや重複ファイルを作りません。
 
