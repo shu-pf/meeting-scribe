@@ -48,6 +48,7 @@ env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 - 機能変更後はビルド成功だけで完了とせず、Debugアプリを起動して変更した機能を実際に操作し、期待どおり動作することを確認する
 - 変更箇所に応じて正常系に加えて主要な異常系・境界条件も確認する
 - TCC権限、外部サービス、実機操作などに阻まれて変更フローを最後まで確認できない場合は、未確認部分と理由を明記し、ユーザーに必要な確認を依頼する。未確認のまま「動作確認済み」と報告しない
+- 「自動的にアップデートを確認」と Sparkle の同期（`Services/CheckForUpdatesViewModel.swift`）を変更したときは、Debug ビルドの後に `scripts/check_update_settings_sync.swift` をコンパイル・実行し、Sparkle 側の書き込みでも画面のトグルでも落ちずに同期することを確認する（手順はスクリプト冒頭）。Sparkle は同じ値を書いても変更を通知するので、同じ値は書き戻さない
 - 画面収録権限は `scripts/check_screen_capture_permission.swift` をDebugアプリと同じbundle ID・開発証明書で署名して確認する
 - ウィンドウ閉鎖時のScreenCaptureKit終了通知を確認するときは、`scripts/check_window_close_signal.swift` をコンパイル・実行し、映像フレーム受信後の結果だけを有効とする
 - 録画音声を変更したときは、マイクありの実録画にシステム音声とマイク音声の2トラックがあり両方に実データが入ること、マイクなしではシステム音声の1トラックだけになること、および各録画から文字起こし用WAVを正常に抽出・合成できることを確認する
