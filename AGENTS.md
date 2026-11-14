@@ -2,10 +2,6 @@
 
 Mac用ローカル会議議事録アプリ。メニューバー常駐、画面録画 → Whisper文字起こし → Ollama要約。標準は全処理ローカル完結で、文字起こしだけ設定で ElevenLabs Scribe v2（クラウド）を選べる。
 
-## エージェント設定方針
-
-Claude Code・Codex 両対応。新コマンドの許可追加は `~/.claude/settings.json` と `~/.codex/rules/default.rules` の両方に追加すること。
-
 ## 作業とリリースの方針
 
 - ブランチは切らず、`main` で直接作業してコミットする
@@ -39,7 +35,7 @@ xcode-build-server config -project MeetingScribe.xcodeproj -scheme "MeetingScrib
 ### CI
 
 - `.github/workflows/ci.yml` が push（main）と pull request で、`macos-26` 上の Debug ビルド（`CODE_SIGNING_ALLOWED=NO`）と `scripts/run_checks.sh` を実行する
-- TCC権限・Ollamaを使わない確認スクリプトを足したら `scripts/run_checks.sh` に加える
+- 確認スクリプト `scripts/check_<名前>.swift` は `./scripts/run_checks.sh <名前> [引数...]` で、必要なアプリのソースとともにビルド・実行する。確認スクリプトを足したら `run_checks.sh` の `CHECK_NAMES` と `sources_for` に登録し、TCC権限・Ollamaを使わないものは引数なしの実行（CI）にも加える
 
 ## リリース
 
@@ -59,20 +55,20 @@ xcode-build-server config -project MeetingScribe.xcodeproj -scheme "MeetingScrib
 - TCC権限、外部サービス、実機操作などに阻まれて変更フローを最後まで確認できない場合は、未確認部分と理由を明記し、ユーザーに必要な確認を依頼する。未確認のまま「動作確認済み」と報告しない
 - 「自動的にアップデートを確認」と Sparkle の同期（`Services/CheckForUpdatesViewModel.swift`）を変更したときは、Debug ビルドの後に `scripts/check_update_settings_sync.swift` をコンパイル・実行し、Sparkle 側の書き込みでも画面のトグルでも落ちずに同期することを確認する（手順はスクリプト冒頭）。Sparkle は同じ値を書いても変更を通知するので、同じ値は書き戻さない
 - 画面収録権限は `scripts/check_screen_capture_permission.swift` をDebugアプリと同じbundle ID・開発証明書で署名して確認する
-- ウィンドウ閉鎖時のScreenCaptureKit終了通知を確認するときは、`scripts/check_window_close_signal.swift` をコンパイル・実行し、映像フレーム受信後の結果だけを有効とする
+- ウィンドウ閉鎖時のScreenCaptureKit終了通知を確認するときは、`./scripts/run_checks.sh window_close_signal` を実行し、映像フレーム受信後の結果だけを有効とする
 - 録画音声を変更したときは、マイクありの実録画にシステム音声とマイク音声の2トラックがあり両方に実データが入ること、マイクなしではシステム音声の1トラックだけになること、および各録画から文字起こし用WAVを正常に抽出・合成できることを確認する
 - Whisperモデル導入フローを変更したときは、アプリからモデルを実際にダウンロードし、録画開始の有効化と文字起こし完了まで確認する
 - Whisperの引数・バイナリ・VADモデルを変更したときは、冒頭に30秒以上の無音がある日本語音声で「ご視聴ありがとうございました」などの繰り返しが出ないこと、無音のない音声で文字起こしの量・内容が変わらないことを確認する
-- 「要約を作成しない」の経路を変更したときは、`scripts/check_skip_summary.swift` を `check_resummarize.swift` と同じファイル群とともにコンパイル・実行し、要約なしで `<日時>_<ID先頭8桁>` の録画・文字起こしだけが保存されること、そこから要約を作成すると日時部分を保ったまま会議名へ付け替わることを確認する。アプリではオン・オフそれぞれで録画から保存まで完了すること、オンで要約モデル未選択・Ollama未起動でも録画できること、処理中にアプリを再起動しても録画開始時の設定どおりに再開することを確認する
+- 「要約を作成しない」の経路を変更したときは、`./scripts/run_checks.sh skip_summary` を実行し、要約なしで `<日時>_<ID先頭8桁>` の録画・文字起こしだけが保存されること、そこから要約を作成すると日時部分を保ったまま会議名へ付け替わることを確認する。アプリではオン・オフそれぞれで録画から保存まで完了すること、オンで要約モデル未選択・Ollama未起動でも録画できること、処理中にアプリを再起動しても録画開始時の設定どおりに再開することを確認する
 - 初回セットアップまたは要約モデル導入フローを変更したときは、Ollama未起動時に次へ進めないこと、古いOllamaでは日本語の更新手順を表示すること、アプリから推奨モデルを実際にダウンロードできること、完了後に選択状態となることを確認する
 - 設定ウィンドウはシングルトンとし、「設定を開く」の連打やアプリ再起動で複数枚に増えないことを確認する
-- 長文要約の分割・統合処理を変更したときは、`scripts/check_long_summary_input.swift` を `SummaryService.swift`・`DiagnosticLogger.swift` とともにコンパイル・実行し、モデルのコンテキスト長を超える合成文字起こしが入力エラーにならず日本語要約まで完了することを確認する。分割が2チャンク以上になる実際の長さの文字起こしでも、部分要約・最終要約が空にならず本文が出力されることを確認する（要約モデルが思考を生成する場合、思考が出力上限を使い切ると本文が空になる）
-- Ollamaとの接続・再試行を変更したときは、`scripts/fake_ollama.py` を起動してから `scripts/check_ollama_reconnect.swift` を `SummaryService.swift`・`DiagnosticLogger.swift` とともにコンパイル・実行する。Ollamaの起動が遅れる場合と生成中に1回切断される場合は要約が完了し、切断が再試行上限に達する場合とOllamaが起動しない場合は日本語の接続エラーになることを確認する
+- 長文要約の分割・統合処理を変更したときは、`./scripts/run_checks.sh long_summary_input` を実行し、モデルのコンテキスト長を超える合成文字起こしが入力エラーにならず日本語要約まで完了することを確認する。分割が2チャンク以上になる実際の長さの文字起こしでも、部分要約・最終要約が空にならず本文が出力されることを確認する（要約モデルが思考を生成する場合、思考が出力上限を使い切ると本文が空になる）
+- Ollamaとの接続・再試行を変更したときは、`scripts/fake_ollama.py <port> <起動までの秒数> <生成で切断する回数>` を起動してから `./scripts/run_checks.sh ollama_reconnect <port>` を実行する。Ollamaの起動が遅れる場合と生成中に1回切断される場合は要約が完了し、切断が再試行上限に達する場合とOllamaが起動しない場合は日本語の接続エラーになることを確認する
 - 失敗ジョブの再実行を変更したときは、Debugアプリで失敗ジョブの「再実行」を押し、文字起こしチェックポイントを再利用して要約から完了し、録画履歴へ追加されることを確認する
-- 要約のやり直し経路を変更したときは、`scripts/check_resummarize.swift` を `RecordingPipeline.swift`・`PipelineJobStore.swift`・`SummaryService.swift`・`TranscriptionService.swift`・`ElevenLabsScribeService.swift`・`WhisperModelStore.swift`・`AudioExtractor.swift`・`DiagnosticLogger.swift` とともにコンパイル・実行し、既存ファイル名の日時部分を保ったまま会議名が付け替わり、やり直し前のファイルが残らないことを確認する。やり直しの出力先は現在の保存先設定ではなく既存ファイルのある場所とする
+- 要約のやり直し経路を変更したときは、`./scripts/run_checks.sh resummarize` を実行し、既存ファイル名の日時部分を保ったまま会議名が付け替わり、やり直し前のファイルが残らないことを確認する。やり直しの出力先は現在の保存先設定ではなく既存ファイルのある場所とする
 - 録画後パイプラインの再開処理を変更したときは、文字起こし中と要約中のそれぞれでDebugアプリを終了・再起動し、永続キューとチェックポイントから二重実行せず完了することを確認する。文字起こし中の強制終了では、残留Whisperを実行パス照合後に停止してから1プロセスだけで再開することも確認する。蓋を閉じたスリープは処理継続を保証せず、スリープ前に再開待ちへ戻して復帰後に自動再開する
 - 録画中に設定済みの保存先フォルダが削除されても、録画完了時に保存先を再作成して完成ファイルを保存できることを境界条件として確認する
-- 録画の品質保証上限は5時間。長時間処理を変更したときは、5時間の音声入力に対して `scripts/check_long_audio_extraction.swift` を実行し、WAV抽出がメモリへ全量展開されないことを確認する
+- 録画の品質保証上限は5時間。長時間処理を変更したときは、5時間の音声入力に対して `./scripts/run_checks.sh long_audio_extraction <音声ファイル>` を実行し、WAV抽出がメモリへ全量展開されないことを確認する
 - 5時間到達時は録画ファイルを正常終了して後処理へ渡し、ユーザーへローカル通知する。この自動終了経路を変更した場合は、短い上限を注入して境界動作を確認する
 
 ## エラーレポート（Sentry）

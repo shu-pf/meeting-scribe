@@ -9,3 +9,6 @@ whisper.cpp/
 
 # scripts/release.sh の Release ビルド
 build/
+
+# xcode-build-server が生成する SourceKit-LSP 用設定（端末ごとのパスを含む）
+buildServer.json
