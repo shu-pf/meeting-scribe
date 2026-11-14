@@ -254,8 +254,21 @@ private struct GeneralSettingsTab: View {
 
 @MainActor
 private struct InformationSettingsTab: View {
+    @State private var sendsErrorReports = CrashReporter.isEnabled
+
     var body: some View {
         Form {
+            if CrashReporter.isAvailable {
+                Section("エラーの自動送信") {
+                    Toggle("クラッシュとエラーを開発者に送信", isOn: $sendsErrorReports)
+                        .onChange(of: sendsErrorReports) { _, enabled in
+                            CrashReporter.setEnabled(enabled)
+                        }
+                    Text(ErrorReportingDisclosure.text)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             Section("診断ログ") {
                 Text("録画や文字起こしが失敗したときの調査情報を、このMac内だけに保存します。会議の内容は記録しません。")
                     .font(.caption)

@@ -16,6 +16,7 @@ struct MeetingScribeApp: App {
     @StateObject private var menuBarViewModel = MenuBarViewModel()
 
     init() {
+        CrashReporter.startIfEnabled()
         let appLog = DiagnosticLogger(category: "App")
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "-"

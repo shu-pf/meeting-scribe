@@ -65,6 +65,13 @@ env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 - 録画の品質保証上限は5時間。長時間処理を変更したときは、5時間の音声入力に対して `scripts/check_long_audio_extraction.swift` を実行し、WAV抽出がメモリへ全量展開されないことを確認する
 - 5時間到達時は録画ファイルを正常終了して後処理へ渡し、ユーザーへローカル通知する。この自動終了経路を変更した場合は、短い上限を注入して境界動作を確認する
 
+## エラーレポート（Sentry）
+
+- `Services/CrashReporter.swift` が、ユーザーが送信を選んだときだけ Sentry を動かす。`DiagnosticLogger` の ERROR はイベント、INFO・WARN は直前の経緯（パンくず）として送る。DSN は `Info.plist` の `SentryDSN`
+- 送る文字列は `Services/PrivacyScrubber.swift` でパス・ファイル名・会議名・ユーザー名を伏せる。会議名やファイル名を値に持つログのキーを足したら `PrivacyScrubber.sensitiveKeys` に加え、`scripts/check_privacy_scrubber.swift` に例を足す
+- 会議の内容（文字起こし・要約の本文）はログにも書かない
+- `scripts/release.sh` は Release の dSYM を `sentry-cli` で送る。事前に `sentry-cli login` が必要
+
 ## Architecture
 
 ```

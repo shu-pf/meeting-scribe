@@ -12,6 +12,7 @@
 #   - .env に公証用の値がある（.env.example 参照）。APP_VERSION は引数で上書きする
 #   - Sparkle の EdDSA 秘密鍵がログインキーチェーンにある
 #   - gh が shu-pf/meeting-scribe と shu-pf/homebrew-tap に書き込める
+#   - sentry-cli がログイン済み（~/.sentryclirc）。Release の dSYM を Sentry へ送り、クラッシュのスタックトレースを読めるようにする
 
 set -euo pipefail
 
@@ -35,6 +36,8 @@ CASK_PATH="Casks/meeting-scribe.rb"
 DERIVED_DATA="$REPO_ROOT/build/DerivedData"
 RELEASE_APP="$DERIVED_DATA/Build/Products/Release/MeetingScribe.app"
 DMG_PATH="$REPO_ROOT/dist/MeetingScribe.dmg"
+SENTRY_ORG="shugo-q0"
+SENTRY_PROJECT="meeting-scribe"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 # notarize_and_dmg.sh は create-dmg/create-dmg（シェル版）の引数を使う。
 # npm 版の create-dmg が PATH の先にあると失敗するため、Homebrew 版を優先する。
@@ -63,6 +66,14 @@ if gh release view "$TAG" >/dev/null 2>&1; then
   echo "Error: release $TAG already exists."
   exit 1
 fi
+if ! command -v sentry-cli >/dev/null 2>&1; then
+  echo "Error: sentry-cli not found. Install it with: brew install getsentry/tools/sentry-cli"
+  exit 1
+fi
+if ! sentry-cli info >/dev/null 2>&1; then
+  echo "Error: sentry-cli is not logged in. Run: sentry-cli login"
+  exit 1
+fi
 
 echo "[1] Building Release..."
 rm -rf "$DERIVED_DATA"
@@ -82,6 +93,13 @@ if [[ ! -f "$DMG_PATH" ]]; then
   echo "Error: DMG not found: $DMG_PATH"
   exit 1
 fi
+
+echo "[2.5] Uploading dSYMs to Sentry..."
+sentry-cli debug-files upload \
+  --org "$SENTRY_ORG" \
+  --project "$SENTRY_PROJECT" \
+  --wait \
+  "$DERIVED_DATA/Build/Products/Release"
 if ! grep -q "<sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>" docs/appcast.xml; then
   echo "Error: docs/appcast.xml does not contain $VERSION."
   exit 1

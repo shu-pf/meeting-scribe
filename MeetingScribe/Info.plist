@@ -4,6 +4,8 @@
 <dict>
 	<key>SUPublicEDKey</key>
 	<string>T1RSycJzs9fRUNc54KhJ89p3XEazJ0jQGS8ah3wUckQ=</string>
+	<key>SentryDSN</key>
+	<string>https://dae239b3b1f7f0803237e269aced6e71@o4511998344757248.ingest.us.sentry.io/4512428379144192</string>
 	<key>SUFeedURL</key>
 	<string>https://shu-pf.github.io/meeting-scribe/appcast.xml</string>
 </dict>

@@ -57,7 +57,28 @@ struct DiagnosticLogger: Sendable {
         }
         if level != .debug {
             DiagnosticLogStore.shared.append(level: level, category: category, message: message)
+            DiagnosticLogForwarder.shared.forward(level: level, category: category, message: message)
         }
+    }
+}
+
+/// 診断ログをエラーレポート（`CrashReporter`）へ渡す口。
+/// 確認スクリプトは Sentry なしでこのファイルをビルドするため、ここでは渡し先の関数だけを持つ。
+nonisolated final class DiagnosticLogForwarder: @unchecked Sendable {
+    typealias Handler = @Sendable (DiagnosticLogger.Level, String, String) -> Void
+
+    static let shared = DiagnosticLogForwarder()
+
+    private let lock = NSLock()
+    private var handler: Handler?
+
+    func setHandler(_ handler: Handler?) {
+        lock.withLock { self.handler = handler }
+    }
+
+    func forward(level: DiagnosticLogger.Level, category: String, message: String) {
+        let handler = lock.withLock { self.handler }
+        handler?(level, category, message)
     }
 }
 

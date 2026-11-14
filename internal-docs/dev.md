@@ -12,7 +12,8 @@ Xcode で `MeetingScribe` を開いてビルド。
 
 1. `.env.example` を `.env` にコピーし、公証用の値を書く。公証の認証情報は `xcrun notarytool store-credentials meeting-scribe` でキーチェーンに保存し、`.env` には `NOTARY_KEYCHAIN_PROFILE=meeting-scribe` だけを書く
 2. main で `MARKETING_VERSION` を上げてコミット・push する（`Bump version to x.y.z`）
-3. リリースノートを Markdown で書き、`./scripts/release.sh <version> <リリースノート.md>` を実行する
+3. `sentry-cli`（`brew install getsentry/tools/sentry-cli`）を入れて `sentry-cli login` しておく。リリース時に dSYM を Sentry へ送る
+4. リリースノートを Markdown で書き、`./scripts/release.sh <version> <リリースノート.md>` を実行する
    - Release ビルド → 署名・公証・DMG（`scripts/notarize_and_dmg.sh`）→ GitHub Release `v<version>` → `docs/appcast.xml` のコミット・push（`Release v<version>`）→ Homebrew tap の cask 更新
 
 ### Sparkle

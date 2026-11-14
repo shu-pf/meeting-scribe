@@ -182,7 +182,16 @@ if [[ -d "$SPARKLE_FW" ]]; then
   codesign --force --options runtime --sign "$NOTARY_IDENTITY" "$SPARKLE_FW"
 fi
 
-# 2c. アプリ本体（最後に署名）
+# 2c. Sentry フレームワーク（エラーレポート）。SPM のバイナリ配布をそのまま埋め込むため、Developer ID で署名し直す
+SENTRY_FW="$STAGING_APP/Contents/Frameworks/Sentry.framework"
+if [[ ! -d "$SENTRY_FW" ]]; then
+  echo "Error: $SENTRY_FW not found."
+  exit 1
+fi
+echo "  Signing Sentry framework..."
+codesign --force --options runtime --sign "$NOTARY_IDENTITY" "$SENTRY_FW"
+
+# 2d. アプリ本体（最後に署名）
 # --force で署名し直すと Xcode が埋め込んだ entitlements は消えるため、明示して付け直す
 codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$NOTARY_IDENTITY" "$STAGING_APP"
 

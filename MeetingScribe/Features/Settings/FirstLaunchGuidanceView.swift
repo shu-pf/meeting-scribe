@@ -10,6 +10,7 @@ import SwiftUI
 @MainActor
 struct FirstLaunchGuidanceView: View {
     @State private var viewModel = InitialSetupViewModel()
+    @State private var sendsErrorReports = CrashReporter.isEnabled
 
     let onComplete: () -> Void
 
@@ -42,7 +43,12 @@ struct FirstLaunchGuidanceView: View {
         }
         .frame(width: 680, height: 590)
         .task {
+            CrashReporter.enableByDefaultIfUnchosen()
+            sendsErrorReports = CrashReporter.isEnabled
             await viewModel.load()
+        }
+        .onChange(of: sendsErrorReports) { _, enabled in
+            CrashReporter.setEnabled(enabled)
         }
         .interactiveDismissDisabled(true)
     }
@@ -52,7 +58,8 @@ struct FirstLaunchGuidanceView: View {
         switch viewModel.currentStep {
         case .welcome:
             InitialSetupWelcomeStep(
-                recommendation: viewModel.recommendation
+                recommendation: viewModel.recommendation,
+                sendsErrorReports: $sendsErrorReports
             )
         case .outputDirectory:
             InitialSetupOutputStep(viewModel: viewModel)
@@ -67,7 +74,8 @@ struct FirstLaunchGuidanceView: View {
                 outputDirectoryPath: viewModel.outputDirectoryPath,
                 recommendation: viewModel.recommendation,
                 hasMicrophonePermission: viewModel.hasMicrophonePermission,
-                skipsSummary: viewModel.skipsSummary
+                skipsSummary: viewModel.skipsSummary,
+                sendsErrorReports: sendsErrorReports
             )
         }
     }
@@ -122,6 +130,7 @@ private struct InitialSetupProgressHeader: View {
 
 private struct InitialSetupWelcomeStep: View {
     let recommendation: InitialSetupRecommendation
+    @Binding var sendsErrorReports: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -151,6 +160,15 @@ private struct InitialSetupWelcomeStep: View {
             )
             .font(.callout)
             .foregroundStyle(.secondary)
+
+            if CrashReporter.isAvailable {
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle("クラッシュとエラーを開発者に送信", isOn: $sendsErrorReports)
+                    Text(ErrorReportingDisclosure.text + "あとから設定の「ログ・情報」で変更できます。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 }
@@ -463,6 +481,7 @@ private struct InitialSetupCompleteStep: View {
     let recommendation: InitialSetupRecommendation
     let hasMicrophonePermission: Bool
     let skipsSummary: Bool
+    let sendsErrorReports: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -484,7 +503,9 @@ private struct InitialSetupCompleteStep: View {
                         : "要約: \(recommendation.summaryModelID)",
                     "画面収録: 許可済み",
                     "マイク: \(hasMicrophonePermission ? "許可済み" : "未許可（必要時に確認）")",
-                ]
+                ] + (CrashReporter.isAvailable
+                    ? ["エラーの自動送信: \(sendsErrorReports ? "オン" : "オフ")（設定から変更できます）"]
+                    : [])
             )
 
             Text(

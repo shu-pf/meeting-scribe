@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		B03D86112F6E5D6000F51F43 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = B03D86102F6E5D6000F51F43 /* Sparkle */; };
+		B03D86222F6E5D6000F51F43 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = B03D86212F6E5D6000F51F43 /* Sentry */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +42,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B03D86112F6E5D6000F51F43 /* Sparkle in Frameworks */,
+				B03D86222F6E5D6000F51F43 /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -85,6 +87,7 @@
 			name = MeetingScribe;
 			packageProductDependencies = (
 				B03D86102F6E5D6000F51F43 /* Sparkle */,
+				B03D86212F6E5D6000F51F43 /* Sentry */,
 			);
 			productName = MeetingScribe;
 			productReference = B01944E52F5C4E3C00EB5447 /* MeetingScribe.app */;
@@ -116,6 +119,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				B03D860F2F6E5D6000F51F43 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				B03D86202F6E5D6000F51F43 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B01944E62F5C4E3C00EB5447 /* Products */;
@@ -438,6 +442,14 @@
 				minimumVersion = 2.10.1;
 			};
 		};
+		B03D86202F6E5D6000F51F43 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -445,6 +457,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B03D860F2F6E5D6000F51F43 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		B03D86212F6E5D6000F51F43 /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B03D86202F6E5D6000F51F43 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

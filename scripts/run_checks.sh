@@ -40,3 +40,4 @@ run_check() {
 run_check pipeline_job_store MeetingScribe/Domain/Pipeline/PipelineJobStore.swift
 run_check recording_history_store MeetingScribe/Domain/History/RecordingHistoryStore.swift
 run_check skip_summary "${PIPELINE_SOURCES[@]}" -- --no-ollama
+run_check privacy_scrubber MeetingScribe/Services/PrivacyScrubber.swift
